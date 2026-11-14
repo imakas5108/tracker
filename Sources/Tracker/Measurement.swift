@@ -1,11 +1,13 @@
 import Foundation
 import CoreGraphics
+import CoreMedia
 
 enum MeasurementOrigin: String, Codable { case manual, automatic, acceptedCandidate }
 
 struct FrameStamp: Codable, Equatable, Hashable, Comparable {
     var value: Int64
     var timescale: Int32
+    var cmTime: CMTime { CMTime(value: value, timescale: timescale) }
     var seconds: Double { Double(value) / Double(timescale) }
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.seconds < rhs.seconds }
 }
@@ -39,6 +41,9 @@ struct AnalysisState: Codable, Equatable {
     var tracks: [PointTrack] = []
     var selectedTrackID: UUID?
     var calibration: Calibration?
+    var scientificState: Self {
+        var state = self; state.selectedTrackID = nil; return state
+    }
 }
 
 struct AnalysisHistory {
@@ -76,5 +81,34 @@ enum VideoGeometry {
         guard rect.width > 0, rect.height > 0, rect.contains(point) else { return nil }
         return CGPoint(x: (point.x - rect.minX) / rect.width * source.width,
                        y: (point.y - rect.minY) / rect.height * source.height)
+    }
+}
+
+// Positions are ordered by source time. Both manual edits and batch delivery use
+// this index so preserving corrections never requires scanning the whole track.
+extension PointTrack {
+    private func insertionIndex(at time: Double) -> Int {
+        var low = 0, high = points.count
+        while low < high {
+            let middle = (low + high) / 2
+            if points[middle].time < time - 0.000001 { low = middle + 1 } else { high = middle }
+        }
+        return low
+    }
+    mutating func put(_ point: Measurement, preservingCorrections: Bool = false) {
+        if let last = points.last, point.time > last.time + 0.000001 { points.append(point); return }
+        let index = insertionIndex(at: point.time)
+        if index < points.count, abs(points[index].time - point.time) < 0.000001 {
+            if preservingCorrections && points[index].origin != .automatic { return }
+            points[index] = point
+        } else { points.insert(point, at: index) }
+    }
+    mutating func mergeAutomatic(_ batch: [Measurement]) {
+        guard let first = batch.first else { return }
+        if points.isEmpty || first.time > points.last!.time + 0.000001 {
+            points.append(contentsOf: batch)
+        } else {
+            for point in batch { put(point, preservingCorrections: true) }
+        }
     }
 }

@@ -20,6 +20,7 @@ open build/Tracker.app
 Open `Package.swift` in Xcode to develop, or run
 `swift run -Xswiftc -swift-version -Xswiftc 5 Tracker`.
 Generate synthetic fixtures with `python3 scripts/make-tracking-fixtures.py`
+and `python3 scripts/make-balltoss-fixtures.py`
 (requires ffmpeg), then run
 `CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" swift test -c release -Xswiftc -swift-version -Xswiftc 5`.
 Without fixtures, media integration/performance tests explicitly skip; unit tests
@@ -88,3 +89,8 @@ are in `THIRD_PARTY_NOTICES.txt` and the application bundle.
 
 See [the MCP validation report](docs/mcp-validation-2026-11-14.md) for actual
 Codex results, native control checks, compatibility workarounds and limits.
+
+The audit fixes preserve rational frame times through media decoding, keep track
+selection outside scientific history, and retain terminal MCP job records without
+keeping closed video sessions alive. See [the resolution report](docs/audit-resolution-2026-11-14.md)
+for regression coverage, native checks, workload measurements and remaining limits.

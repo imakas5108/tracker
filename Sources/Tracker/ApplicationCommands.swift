@@ -1,12 +1,17 @@
 import Foundation
 import TrackerAutomation
 
-struct SessionTrackingJob {
+@MainActor
+final class SessionTrackingJob {
     var id: UUID
     var trackID: UUID
     var state: String
     var processed: Int
     var error: String?
+    var revision = 0
+    init(id: UUID, trackID: UUID, state: String, processed: Int) {
+        self.id = id; self.trackID = trackID; self.state = state; self.processed = processed
+    }
 }
 
 @MainActor
@@ -14,7 +19,7 @@ extension VideoSession {
     var reviewTrackID: UUID? { lastTrackingID.flatMap { trackingJobs[$0]?.trackID } }
     func recordTrackingState() {
         guard let id = lastTrackingID else { return }
-        trackingJobs[id]?.state = jobState; trackingJobs[id]?.processed = processedFrames
+        trackingJobs[id]?.state = jobState; trackingJobs[id]?.processed = processedFrames; trackingJobs[id]?.revision = revision
     }
     func requireReady() throws {
         guard !closed else { throw AutomationError("session_closed", "The video session was closed.") }
@@ -32,7 +37,7 @@ extension VideoSession {
     }
     @discardableResult func createTrack(name: String) -> PointTrack {
         let track = PointTrack(name: name)
-        edit { $0.tracks.append(track); $0.selectedTrackID = track.id }; tool = .mark
+        edit { $0.tracks.append(track) }; selectedTrackID = track.id; tool = .mark
         return track
     }
     func recordPoint(_ point: CGPoint, trackID: UUID, time: Double) throws {
@@ -57,7 +62,7 @@ extension VideoSession {
     }
     func beginTracking(trackID: UUID) throws -> UUID {
         try requireReady(); let track = try requireTrack(trackID)
-        guard !isTracking, !isSeeking, let stamp = displayedFrame?.stamp,
+        guard !isTracking, !isSeeking, !playing, let stamp = displayedFrame?.stamp,
               track.points.contains(where: { abs($0.time-stamp.seconds) < 0.000001 }) else {
             throw AutomationError("invalid_seed", "Wait for the current job/seek, and mark this track on the displayed frame.")
         }

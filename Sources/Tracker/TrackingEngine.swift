@@ -127,10 +127,12 @@ enum TrackingEngine {
         let started = Date()
         try Task.checkCancellation()
         let media = MediaSource(url: url)
-        let seedFrame = try await media.image(at: seed.time)
+        let seedFrame: DecodedFrame
+        if let stamp = seed.frame { seedFrame = try await media.image(at: stamp) }
+        else { seedFrame = try await media.image(at: seed.time) }
         guard abs(seedFrame.stamp.seconds - seed.time) < 0.000001 else { throw MediaError.decode }
         let matcher = try TemplateMatcher(image: seedFrame.grayscale(), center: seed.pixel, settings: settings)
-        let stream = try await SequentialFrames(url: url, start: CMTime(seconds: seed.time, preferredTimescale: 60000))
+        let stream = try await SequentialFrames(url: url, start: seedFrame.stamp.cmTime)
         defer { stream.cancel() }
         var previous = seed.pixel
         var batch: [Measurement] = []

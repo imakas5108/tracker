@@ -9,22 +9,29 @@ final class AutomationOperation {
     var state = "queued"
     var result: JSONValue = .null
     var error: AutomationError?
-    var session: VideoSession?
+    private var sessionID: UUID?
+    private var terminalRevision = 0
+    weak var session: VideoSession? { didSet { sessionID = session?.id } }
+    var trackingRecord: SessionTrackingJob?
+    func finish() { terminalRevision = session?.revision ?? terminalRevision }
     var trackingID: UUID?
     var task: Task<Void, Never>?
     var cancelAction: (() -> Void)?
     init(id: UUID = UUID(), kind: String, session: VideoSession? = nil, trackingID: UUID? = nil) {
-        self.id = id; self.kind = kind; self.session = session; self.trackingID = trackingID
+        self.id = id; self.kind = kind; self.session = session; self.sessionID = session?.id; self.trackingID = trackingID
     }
     func snapshot() throws -> JSONValue {
         var object: [String: JSONValue] = ["job_id": .string(id.uuidString), "kind": .string(kind), "state": .string(state), "result": result]
-        if let session {
-            object["session_id"] = .string(session.id.uuidString); object["revision"] = .number(Double(session.revision))
-            if let trackingID, let record = session.trackingJobs[trackingID] {
-                object["state"] = .string(record.state.lowercased().replacingOccurrences(of:" ",with:"_"))
-                object["track_id"] = .string(record.trackID.uuidString); object["processed_frames"] = .number(Double(record.processed))
-                if let message = record.error { object["error"] = .object(["code":.string("tracking_failed"),"message":.string(message)]) }
-            }
+        if let sessionID {
+            object["session_id"] = .string(sessionID.uuidString)
+            object["revision"] = .number(Double(["queued", "running"].contains(state) ? session?.revision ?? terminalRevision : terminalRevision))
+        }
+        if let record = trackingRecord {
+            object["state"] = .string(record.state.lowercased().replacingOccurrences(of:" ",with:"_"))
+            object["revision"] = .number(Double(record.revision))
+            object["track_id"] = .string(record.trackID.uuidString)
+            object["processed_frames"] = .number(Double(record.processed))
+            if let message = record.error { object["error"] = .object(["code":.string("tracking_failed"),"message":.string(message)]) }
         }
         if let error { object["error"] = try .from(error) }
         return .object(object)
@@ -150,7 +157,7 @@ final class AutomationController: ObservableObject {
     private func operation(_ kind: String, session: VideoSession? = nil, onCancel: (() -> Void)? = nil, body: @escaping @MainActor (AutomationOperation) async throws -> JSONValue) throws -> JSONValue {
         let operation = AutomationOperation(kind:kind,session:session); operation.cancelAction = onCancel; operations[operation.id] = operation
         operation.task = Task {
-            defer { operation.task = nil; operation.cancelAction = nil }
+            defer { operation.finish(); operation.task = nil; operation.cancelAction = nil }
             do {
                 try Task.checkCancellation(); operation.state = "running"
                 operation.result = try await body(operation)
@@ -161,6 +168,7 @@ final class AutomationController: ObservableObject {
     }
     private func tracking(_ session: VideoSession, id: UUID) throws -> JSONValue {
         let operation = AutomationOperation(id:id,kind:"tracking",session:session,trackingID:id)
+        operation.trackingRecord = session.trackingJobs[id]
         operations[id] = operation; return try operation.snapshot()
     }
     private func waitReady(_ session: VideoSession) async throws {
@@ -271,14 +279,14 @@ final class AutomationController: ObservableObject {
             try s.requireReady()
             let requested = a["time"]?.number ?? s.time
             guard requested >= 0, requested <= s.duration else { throw AutomationError("invalid_time", "Time is outside this video.") }
-            let stamp = s.frameTimes.last(where: { $0.seconds <= requested+0.0000001 }) ?? s.frameTimes[0]
+            let stamp = s.frameTimes[MediaSource.frameIndex(at: requested, in: s.frameTimes)]
             let url = s.url, analysis = s.analysis, revision = s.revision
             let maxEdge = a["max_edge"] == nil ? 1280 : try a.requiredInt("max_edge")
             let crop = a["crop"]?.object
             let overlays = a["overlays"]?.bool ?? false
             return try await Task.detached(priority:.utility) {
                 let reader = MediaSource(url:url)
-                let frame = try await reader.image(at:stamp.seconds)
+                let frame = try await reader.image(at:stamp)
                 return try FramePreview.render(frame,analysis:analysis,revision:revision,crop:crop,maxEdge:maxEdge,overlays:overlays)
             }.value
         case "tracker_get_review":

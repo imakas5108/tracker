@@ -41,11 +41,17 @@ final class PerformanceTests: XCTestCase {
     func testRunningEngineCancellationCompletes() async throws {
         guard FileManager.default.fileExists(atPath: clip.path) else { throw XCTSkip("Generate synthetic fixtures first") }
         let source = clip
+        let started = EngineStartSignal()
         let task = Task.detached {
-            try await TrackingEngine.run(url: source, seed: Measurement(time: 0, pixel: CGPoint(x: 30, y: 45)),
-                settings: TrackingSettings(templateRadius: 8, searchRadius: 100), after: nil) { _ in }
+            do {
+                try await TrackingEngine.run(url: source, seed: Measurement(time: 0, pixel: CGPoint(x: 30, y: 45)),
+                    settings: TrackingSettings(templateRadius: 8, searchRadius: 100), after: nil) { _ in await started.signal() }
+            } catch {
+                await started.signal()
+                throw error
+            }
         }
-        try await Task.sleep(for: .milliseconds(20))
+        await started.wait()
         let start = Date(); task.cancel()
         do { try await task.value; XCTFail("Expected cancellation before the full workload completed") }
         catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
@@ -67,5 +73,15 @@ private actor FrameCount {
         switch event {
         case .update(let points, _, _), .complete(let points, _, _), .review(let points, _, _): value += points.count
         }
+    }
+}
+
+private actor EngineStartSignal {
+    private var started = false
+    private var waiter: CheckedContinuation<Void, Never>?
+    func signal() { started = true; waiter?.resume(); waiter = nil }
+    func wait() async {
+        if started { return }
+        await withCheckedContinuation { waiter = $0 }
     }
 }

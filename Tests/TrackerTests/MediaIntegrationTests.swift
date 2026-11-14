@@ -110,7 +110,8 @@ final class MediaIntegrationTests: XCTestCase {
         defer { session.close() }
         for _ in 0..<300 { if !session.loading && !session.isSeeking { break }; try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNil(session.error)
-        XCTAssertEqual(session.analysis, state)
+        XCTAssertEqual(session.analysis, state.scientificState)
+        XCTAssertEqual(session.selectedTrackID, track.id)
         XCTAssertEqual(session.displayedFrame?.stamp.seconds ?? -1, 0.04, accuracy: 0.000001)
         XCTAssertFalse(session.isDirty)
     }

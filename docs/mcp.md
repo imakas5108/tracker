@@ -15,6 +15,7 @@ are constrained in `Package.swift` to avoid raising the Swift tools floor.
 ```sh
 zsh scripts/build-app.sh
 python3 scripts/make-tracking-fixtures.py
+python3 scripts/make-balltoss-fixtures.py
 CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" swift test -c release -Xswiftc -swift-version -Xswiftc 5
 python3 scripts/test-mcp.py
 ```
@@ -166,3 +167,18 @@ version returns `incompatible_protocol`. Connections have 30-second I/O timeouts
 a 1 MiB request limit and 16 MiB response limit, with four concurrent requests.
 This isolates other users, not other programs running as the same user. There
 is no remote authentication surface.
+
+## Audit corrections
+
+Frame lookup preserves the indexed rational stamp through the decoder and
+sequential-reader start. Indexing uses CoreMedia output timing, so container
+edit offsets agree with the native viewer; empty edit spans are not observations.
+Track selection is view state: changing it does not cancel tracking, enter undo
+history, mark scientific results dirty, or increment the edit revision. Explicit
+saves still serialize the selected track in the existing version-1 format.
+
+Tracking starts require a paused, ready source frame through both UI and MCP.
+Terminal operation records retain IDs, status, revision and errors without
+owning the closed video session. App-lifetime request deduplication is unchanged.
+See [the audit resolution report](audit-resolution-2026-11-14.md) for executed
+checks and the launch-environment limitation observed during verification.

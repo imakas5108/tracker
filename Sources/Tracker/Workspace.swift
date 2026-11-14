@@ -58,9 +58,11 @@ final class VideoSession: ObservableObject, Identifiable {
     private var restored: ProjectFile?
 
     var tracks: [PointTrack] { analysis.tracks }
-    var selectedTrackID: UUID? {
-        get { analysis.selectedTrackID }
-        set { if analysis.selectedTrackID != newValue { edit { $0.selectedTrackID = newValue } } }
+    @Published var selectedTrackID: UUID? {
+        didSet { if let id = selectedTrackID, !tracks.contains(where: { $0.id == id }) { selectedTrackID = nil } }
+    }
+    private func reconcileSelection() {
+        if !tracks.contains(where: { $0.id == selectedTrackID }) { selectedTrackID = tracks.first?.id }
     }
     var calibration: Calibration? {
         get { analysis.calibration }
@@ -96,7 +98,8 @@ final class VideoSession: ObservableObject, Identifiable {
     init(url: URL, project: ProjectFile? = nil, projectURL: URL? = nil) {
         self.url = url; self.media = MediaSource(url: url); self.restored = project; self.projectURL = projectURL
         if let project {
-            history.restore(project.analysis); analysis = project.analysis; savedAnalysis = project.analysis
+            history.restore(project.analysis.scientificState); analysis = project.analysis.scientificState
+            savedAnalysis = analysis; selectedTrackID = project.analysis.selectedTrackID
             settings = project.settings; savedSettings = project.settings
         }
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.1, preferredTimescale: 600), queue: .main) { [weak self] time in
@@ -112,10 +115,10 @@ final class VideoSession: ObservableObject, Identifiable {
     func edit(_ change: (inout AnalysisState) -> Void) {
         cancelTracking()
         var next = analysis; change(&next)
-        history.replace(next); analysis = history.state
+        history.replace(next.scientificState); analysis = history.state; reconcileSelection()
     }
-    func undo() { cancelTracking(); history.undo(); analysis = history.state; calibrationPoints = [] }
-    func redo() { cancelTracking(); history.redo(); analysis = history.state; calibrationPoints = [] }
+    func undo() { cancelTracking(); history.undo(); analysis = history.state; reconcileSelection(); calibrationPoints = [] }
+    func redo() { cancelTracking(); history.redo(); analysis = history.state; reconcileSelection(); calibrationPoints = [] }
 
     private func load() async {
         do {
@@ -172,7 +175,7 @@ final class VideoSession: ObservableObject, Identifiable {
         player.seek(to: CMTime(value: target.value, timescale: target.timescale), toleranceBefore: .zero, toleranceAfter: .zero)
         seekTask = Task {
             do {
-                let frame = try await media.image(at: target.seconds)
+                let frame = try await media.image(at: target)
                 guard generation == seekGeneration, !closed, !Task.isCancelled else { return }
                 guard abs(frame.stamp.seconds - target.seconds) < 0.000001 else { throw MediaError.decode }
                 displayedFrame = frame; time = frame.stamp.seconds; isSeeking = false
@@ -186,13 +189,9 @@ final class VideoSession: ObservableObject, Identifiable {
     var seekToken: UUID { seekGeneration }
     func cancelSeek() { seekTask?.cancel(); seekGeneration = UUID(); isSeeking = false; displayedFrame = nil }
     private func frameIndex(at time: Double) -> Int {
-        var low = 0, high = frameTimes.count
-        while low < high {
-            let mid = (low+high)/2
-            if frameTimes[mid].seconds <= time + 0.0000001 { low = mid+1 } else { high = mid }
-        }
-        return max(0, low-1)
+        MediaSource.frameIndex(at: time, in: frameTimes)
     }
+
     func step(_ count: Int) {
         guard !frameTimes.isEmpty else { return }
         let index = min(frameTimes.count-1, max(0, frameIndex(at: time)+count))
@@ -218,20 +217,13 @@ final class VideoSession: ObservableObject, Identifiable {
         }
     }
     static func put(_ point: Measurement, into track: inout PointTrack) {
-        if let last = track.points.last, point.time > last.time + 0.000001 {
-            track.points.append(point); return
-        }
-        var low = 0, high = track.points.count
-        while low < high {
-            let middle = (low+high)/2
-            if track.points[middle].time < point.time - 0.000001 { low = middle+1 } else { high = middle }
-        }
-        if low < track.points.count, abs(track.points[low].time-point.time) < 0.000001 { track.points[low] = point }
-        else { track.points.insert(point, at: low) }
+        track.put(point)
     }
+
     func undoLastPoint() {
+        let trackID = selectedTrackID
         edit { state in
-            guard let index = state.tracks.firstIndex(where: { $0.id == state.selectedTrackID }), !state.tracks[index].points.isEmpty else { return }
+            guard let index = state.tracks.firstIndex(where: { $0.id == trackID }), !state.tracks[index].points.isEmpty else { return }
             state.tracks[index].points.removeLast()
         }
     }
@@ -242,7 +234,7 @@ final class VideoSession: ObservableObject, Identifiable {
 
     func startTracking(seed override: Measurement? = nil, after: Double? = nil, trackID explicitTrack: UUID? = nil) {
         guard let trackID = explicitTrack ?? selectedTrackID,
-              let chosen = override ?? tracks.first(where: { $0.id == trackID })?.points.first(where: { abs($0.time - (displayedFrame?.stamp.seconds ?? -1)) < 0.000001 }), !loading, !isSeeking else {
+              let chosen = override ?? tracks.first(where: { $0.id == trackID })?.points.first(where: { abs($0.time - (displayedFrame?.stamp.seconds ?? -1)) < 0.000001 }), !loading, !isSeeking, !playing else {
             exportError = "Mark the displayed frame before starting autotracking."; return
         }
         pause(); cancelTracking()
@@ -283,16 +275,13 @@ final class VideoSession: ObservableObject, Identifiable {
             runSummary = String(format: "%d frames · %.2f s · %.1f frames/s", count, seconds, Double(count)/max(seconds, 0.000001))
         }
         var next = analysis
-        for point in batch {
-            // Manual corrections and explicitly reviewed measurements remain authoritative.
-            if let old = next.tracks[index].points.first(where: { abs($0.time-point.time) < 0.000001 }), old.origin != .automatic { continue }
-            Self.put(point, into: &next.tracks[index])
-        }
+        next.tracks[index].mergeAutomatic(batch)
         if next != analysis {
             // Coalesced delivery: one checkpoint per run, not per UI refresh.
             if analysis == before { history.replace(next) } else { history.updateCurrent(next) }
             analysis = next
         }
+        recordTrackingState()
     }
     private func trackingFailed(_ error: Error, token: UUID) {
         guard runID == token else { return }
@@ -323,10 +312,11 @@ final class VideoSession: ObservableObject, Identifiable {
 
     func setSaving(_ value: Bool) { saving = value }
     func didSave(_ document: ProjectFile, at destination: URL) {
-        projectURL = destination; savedAnalysis = document.analysis; savedSettings = document.settings
+        projectURL = destination; savedAnalysis = document.analysis.scientificState; savedSettings = document.settings
     }
     func snapshot() -> ProjectFile {
-        ProjectFile(source: url, sourceSize: size, analysis: analysis, time: displayedFrame?.stamp.seconds ?? time, settings: settings)
+        var persisted = analysis; persisted.selectedTrackID = selectedTrackID
+        return ProjectFile(source: url, sourceSize: size, analysis: persisted, time: displayedFrame?.stamp.seconds ?? time, settings: settings)
     }
     func saveProject() async -> Bool {
         guard !loading, !saving else { return false }
