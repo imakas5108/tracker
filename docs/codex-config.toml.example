@@ -1,0 +1,6 @@
+# Merge into this checkout's .codex/config.toml after building and testing.
+# Update the absolute command if the checkout or app moves.
+[mcp_servers.tracker]
+command = "/Users/imakas/Documents/tracker/build/Tracker.app/Contents/MacOS/TrackerMCP"
+startup_timeout_sec = 25
+tool_timeout_sec = 60

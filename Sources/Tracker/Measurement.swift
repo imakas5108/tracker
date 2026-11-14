@@ -1,19 +1,31 @@
 import Foundation
 import CoreGraphics
 
-struct Measurement: Identifiable {
-    let id = UUID()
-    let time: Double
-    let pixel: CGPoint
+enum MeasurementOrigin: String, Codable { case manual, automatic, acceptedCandidate }
+
+struct FrameStamp: Codable, Equatable, Hashable, Comparable {
+    var value: Int64
+    var timescale: Int32
+    var seconds: Double { Double(value) / Double(timescale) }
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.seconds < rhs.seconds }
 }
 
-struct PointTrack: Identifiable {
-    let id = UUID()
+struct Measurement: Identifiable, Codable, Equatable {
+    var id = UUID()
+    let time: Double
+    let pixel: CGPoint
+    var origin: MeasurementOrigin = .manual
+    var score: Double? = nil
+    var frame: FrameStamp? = nil
+}
+
+struct PointTrack: Identifiable, Codable, Equatable {
+    var id = UUID()
     var name: String
     var points: [Measurement] = []
 }
 
-struct Calibration {
+struct Calibration: Codable, Equatable {
     var first: CGPoint
     var second: CGPoint
     var length: Double
@@ -21,6 +33,34 @@ struct Calibration {
 
     var pixelsPerUnit: Double { hypot(second.x - first.x, second.y - first.y) / length }
     var isValid: Bool { length.isFinite && length > 0 && pixelsPerUnit.isFinite && pixelsPerUnit > 0 }
+}
+
+struct AnalysisState: Codable, Equatable {
+    var tracks: [PointTrack] = []
+    var selectedTrackID: UUID?
+    var calibration: Calibration?
+}
+
+struct AnalysisHistory {
+    private(set) var state = AnalysisState()
+    private var past: [AnalysisState] = []
+    private var future: [AnalysisState] = []
+    var canUndo: Bool { !past.isEmpty }
+    var canRedo: Bool { !future.isEmpty }
+    mutating func replace(_ next: AnalysisState) {
+        guard next != state else { return }
+        past.append(state); future.removeAll(); state = next
+    }
+    mutating func restore(_ next: AnalysisState) { state = next; past.removeAll(); future.removeAll() }
+    mutating func updateCurrent(_ next: AnalysisState) { state = next; future.removeAll() }
+    mutating func undo() {
+        guard let next = past.popLast() else { return }
+        future.append(state); state = next
+    }
+    mutating func redo() {
+        guard let next = future.popLast() else { return }
+        past.append(state); state = next
+    }
 }
 
 enum VideoGeometry {

@@ -31,6 +31,7 @@ struct PositionPlot: View {
                     let position = session.coordinates(point.pixel)
                     PointMark(x: .value("Time", point.time), y: .value(component, Double(component == "x" ? position.x : position.y)))
                         .foregroundStyle(Color.accentColor)
+                        .symbol(by: .value("Source", point.origin.rawValue))
                 }
                 .chartXAxisLabel("Time (s)")
                 .padding(.horizontal, 16).padding(.bottom, 16)
@@ -55,20 +56,27 @@ struct DataPanel: View {
             } else {
                 Table(session.points) {
                     TableColumn("t (s)") { point in Text(point.time, format: .number.precision(.fractionLength(3))) }
-                        .width(min: 55, ideal: 70, max: 130)
+                        .width(52)
                     TableColumn("x (\(session.unit))") { point in Text(session.coordinates(point.pixel).x, format: .number.precision(.fractionLength(2))) }
-                        .width(min: 55, ideal: 70, max: 130)
+                        .width(52)
                     TableColumn("y (\(session.unit))") { point in Text(session.coordinates(point.pixel).y, format: .number.precision(.fractionLength(2))) }
-                        .width(min: 55, ideal: 70, max: 130)
+                        .width(52)
+                    TableColumn("Via") { point in
+                        Text(point.origin == .manual ? "M" : point.origin == .automatic ? "A" : "R")
+                            .help("\(point.origin.rawValue); score: \(point.score.map { String($0) } ?? "not applicable")")
+                    }.width(min: 28, ideal: 32, max: 40)
                 }.font(.system(.caption, design: .monospaced))
             }
             Divider()
+            Text("M manual · A automatic · R reviewed").font(.caption2).foregroundStyle(.secondary).padding(.top, 4)
             HStack {
-                Button("Remove Last", action: session.undoLastPoint)
+                Button("Undo", action: session.undo).disabled(!session.canUndo)
+                Button("Redo", action: session.redo).disabled(!session.canRedo)
+                Button("Remove Last", action: session.undoLastPoint).disabled(session.points.isEmpty)
                     .help("Remove the point with the latest timestamp")
                 Spacer()
-                Button("Export CSV…", action: session.exportCSV)
-            }.controlSize(.small).padding(10).disabled(session.points.isEmpty)
+                Button("Export CSV…", action: session.exportCSV).disabled(session.points.isEmpty)
+            }.controlSize(.mini).padding(10)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -124,7 +132,7 @@ struct CalibrationSheet: View {
                 Button("Cancel") { session.calibrationPoints = []; dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Apply Scale") {
-                    session.calibration = calibration
+                    if let calibration { try? session.applyCalibration(calibration) }
                     if let calibration { session.calibrationPoints = [calibration.first, calibration.second] }
                     session.tool = .navigate
                     dismiss()
@@ -167,7 +175,7 @@ struct PositionEntrySheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Mark Position") {
                     if let point { session.selectTool(.mark); session.mark(point); dismiss() }
-                }.keyboardShortcut(.defaultAction).disabled(point == nil)
+                }.keyboardShortcut(.defaultAction).disabled(point == nil || !session.canMark)
             }
         }.padding(24).frame(width: 420)
     }

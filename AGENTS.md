@@ -35,8 +35,11 @@ the purpose, acceptance criteria, component boundaries, and delivery sequence.
 ## Verification and reporting
 
 - Build the local app with `zsh scripts/build-app.sh`; launch `build/Tracker.app`.
-  Run `CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" swift test` for geometry
-  and calibration checks. Xcode tools may require execution outside a restrictive
+  Generate fixtures using `python3 scripts/make-tracking-fixtures.py` (ffmpeg), then
+  run `CLANG_MODULE_CACHE_PATH="$PWD/.build/ModuleCache" swift test -c release -Xswiftc -swift-version -Xswiftc 5`.
+  The flags work around pinned SDK 0.11.0 compilation on Swift 6.4. See docs/mcp.md.
+  Media tests skip explicitly when fixtures are missing; report that distinction.
+  Xcode tools may require execution outside a restrictive
   sandbox. Do not report unrun checks as passing.
 - For interface changes, read `DESIGN.md`. Keep UI review active during development
   as requested for this project; record evidence and verification limits.

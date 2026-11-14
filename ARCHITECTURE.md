@@ -1,9 +1,12 @@
 # Tracker for macOS: purpose and architecture
 
-Status: architecture target with an initial native Swift UI prototype. Video import,
-playback, session tabs, manual marking, scale calibration, plots/tables, and CSV
-export are implemented. Autotracking, batch scheduling, project persistence, and
-MCP remain unimplemented. No performance claims have been established.
+Status: native Swift analysis baseline with source-frame marking, versioned project
+save/reopen, undo/redo, fixed-template autotracking, uncertain-match review, and
+bounded job admission. Initial synthetic release benchmarks are recorded in
+`docs/tracking-baseline-2026-11-14.md`. Adaptive tracking, dynamic parallel
+scheduling remain future work; real-footage performance is unvalidated. A local
+Swift MCP bridge now controls the shared application commands; connection and
+verification details are recorded in `docs/mcp.md`.
 
 ## Purpose
 
@@ -184,6 +187,11 @@ testable independently. Mark predictions, interpolations, and manual corrections
 distinctly from automatically accepted image measurements.
 
 ### Resource-aware scheduler
+
+Current baseline: jobs queue behind one shared tracking execution slot. There is
+no session cap. This is a measured starting budget, not the final adaptive scheduler
+or a claim of simultaneous CPU processing. Increase admission after representative
+video and interactive-latency measurements justify it.
 
 Own a shared execution budget across sessions, rather than allocating an
 unrestricted worker pool per video. Coordinate decoder admission, CPU tasks,

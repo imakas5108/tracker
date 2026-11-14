@@ -41,7 +41,12 @@ struct WorkspaceView: View {
             } else {
                 EmptyWorkspace(open: workspace.openVideos)
             }
+            Divider()
+            AgentControlView(controller: workspace.automation)
         }
+        .alert("Project", isPresented: Binding(get: { workspace.message != nil }, set: { if !$0 { workspace.message = nil } })) {
+            Button("OK") { workspace.message = nil }
+        } message: { Text(workspace.message ?? "") }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button(action: workspace.openVideos) { Label("Open Video", systemImage: "folder") }
@@ -50,7 +55,42 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .principal) {
                 Text("Tracker").font(.headline)
             }
+            ToolbarItem {
+                Button(action: workspace.chooseProject) { Label("Open Project", systemImage: "doc") }
+            }
         }
+    }
+}
+
+struct AgentControlView: View {
+    @ObservedObject var controller: AutomationController
+    @State private var showActions = false
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(controller.endpointError != nil ? "Agent control unavailable" : controller.enabled ? "Agent control allowed · \(controller.clients.count) connected" : "Agent control stopped")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Recent Agent Actions") { showActions.toggle() }
+                .popover(isPresented: $showActions) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Agent activity").font(.headline)
+                        if let error = controller.endpointError { Text(error).textSelection(.enabled) }
+                        if controller.actions.isEmpty { Text("No agent actions in this app session.").foregroundStyle(.secondary) }
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(controller.actions.enumerated()), id: \.offset) { _, action in Text(action).textSelection(.enabled) }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 260)
+                        Text("Tracking jobs belong to Tracker. Disconnecting or stopping control leaves them available in the workspace.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.padding(16).frame(width: 440)
+                }
+            Spacer()
+            if controller.enabled {
+                Button("Stop Agent Control", action: controller.stopControl)
+            } else {
+                Button("Allow Agent Control", action: controller.allowControl).disabled(controller.endpointError != nil)
+            }
+        }.buttonStyle(.borderless).padding(.horizontal, 14).padding(.vertical, 7)
     }
 }
 
@@ -111,12 +151,16 @@ struct SessionView: View {
                 Toggle(isOn: $session.showAxes) { Label("Axes", systemImage: "arrow.up.and.right") }
                     .toggleStyle(.button).help("Show the coordinate origin at the lower left of the video")
                 Divider().frame(height: 20)
-                Label("Autotracker: not implemented", systemImage: "scope")
-                    .font(.callout).foregroundStyle(.secondary)
+                Button { Task { _ = await session.saveProject() } } label: {
+                    Label(session.saving ? "Saving…" : "Save Project", systemImage: "square.and.arrow.down")
+                }.disabled(session.saving || session.isTracking)
+                Text(session.isDirty ? "Unsaved changes" : "Saved state").font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             .disabled(session.loading || session.error != nil)
+            Divider()
+            TrackingControls(session: session)
             Divider()
             HSplitView {
                 trackList.frame(minWidth: 170, idealWidth: 190, maxWidth: 220)
@@ -144,7 +188,7 @@ struct SessionView: View {
         }
         .sheet(isPresented: $session.showCalibration) { CalibrationSheet(session: session) }
         .sheet(isPresented: $showPositionEntry) { PositionEntrySheet(session: session) }
-        .alert("Could not export", isPresented: Binding(get: { session.exportError != nil }, set: { if !$0 { session.exportError = nil } })) {
+        .alert("Analysis", isPresented: Binding(get: { session.exportError != nil }, set: { if !$0 { session.exportError = nil } })) {
             Button("OK") { session.exportError = nil }
         } message: { Text(session.exportError ?? "") }
     }
@@ -222,7 +266,13 @@ struct VideoCanvas: View {
                         Text(error).multilineTextAlignment(.center)
                     }.padding(28).foregroundStyle(.white)
                 } else {
-                    NativeVideo(player: session.player)
+                    if !session.playing, let frame = session.displayedFrame {
+                        Image(decorative: frame.image, scale: 1).resizable().aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else { NativeVideo(player: session.player) }
+                    if session.isSeeking {
+                        Text("Loading frame…").padding(8).background(.black).foregroundStyle(.white)
+                    }
                     Canvas { context, _ in
                         func project(_ point: CGPoint) -> CGPoint {
                             CGPoint(x: rect.minX + point.x / sourceSize.width * rect.width,
@@ -248,6 +298,21 @@ struct VideoCanvas: View {
                             context.stroke(cross, with: .color(.black), lineWidth: 4)
                             context.stroke(cross, with: .color(.white), lineWidth: 2)
                         }
+                        if let review = session.review, let point = review.evidence.position {
+                            let center = project(point)
+                            context.stroke(Path(ellipseIn: CGRect(x: center.x-10, y: center.y-10, width: 20, height: 20)), with: .color(.black), lineWidth: 5)
+                            context.stroke(Path(ellipseIn: CGRect(x: center.x-10, y: center.y-10, width: 20, height: 20)), with: .color(.yellow), lineWidth: 2)
+                        }
+                        if let seed = session.seed {
+                            let center = project(seed.pixel)
+                            for radius in [session.settings.templateRadius, session.settings.searchRadius] {
+                                let rx = CGFloat(radius) / sourceSize.width * rect.width
+                                let ry = CGFloat(radius) / sourceSize.height * rect.height
+                                let box = Path(CGRect(x: center.x-rx, y: center.y-ry, width: rx*2, height: ry*2))
+                                context.stroke(box, with: .color(.black), lineWidth: 3)
+                                context.stroke(box, with: .color(.white), style: StrokeStyle(lineWidth: 1, dash: [4,3]))
+                            }
+                        }
                         let ends = session.calibrationPoints.isEmpty ? [session.calibration?.first, session.calibration?.second].compactMap { $0 } : session.calibrationPoints
                         if let first = ends.first {
                             var line = Path()
@@ -261,7 +326,7 @@ struct VideoCanvas: View {
                             }
                         }
                     }.allowsHitTesting(false)
-                    if session.tool != .navigate {
+                    if session.tool != .navigate && session.canMark {
                         Color.clear.contentShape(Rectangle())
                             .onTapGesture { location in
                                 if let point = VideoGeometry.sourcePoint(location, source: session.size, rect: rect) { session.mark(point) }

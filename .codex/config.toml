@@ -1,0 +1,4 @@
+[mcp_servers.tracker]
+command = "/Users/imakas/Documents/tracker/build/Tracker.app/Contents/MacOS/TrackerMCP"
+startup_timeout_sec = 25
+tool_timeout_sec = 60
