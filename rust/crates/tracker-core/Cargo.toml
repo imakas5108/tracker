@@ -1,0 +1,15 @@
+[package]
+name = "tracker-core"
+description = "Scientific data model for Tracker: frame stamps, tracks, coordinates, undo history, kinematics and project files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["rc"] }
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

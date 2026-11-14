@@ -1,0 +1,11 @@
+[package]
+name = "tracker-vision"
+description = "Template matching and autotracking for Tracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracker-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true

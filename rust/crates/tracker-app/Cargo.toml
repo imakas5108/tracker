@@ -1,0 +1,24 @@
+[package]
+name = "tracker-app"
+description = "Tracker application core: sessions, shared commands, jobs, scheduler, datasets and the agent control server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tracker-core.workspace = true
+tracker-vision.workspace = true
+tracker-media.workspace = true
+tracker-dataset.workspace = true
+tracker-ipc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+csv.workspace = true
+png = "=0.18.0"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile.workspace = true

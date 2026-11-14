@@ -1,0 +1,19 @@
+[package]
+name = "tracker-ui"
+description = "Tracker's native window: a Java Tracker style workspace with agent activity, built on GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tracker"
+path = "src/main.rs"
+
+[dependencies]
+tracker-core.workspace = true
+tracker-app.workspace = true
+tracker-vision.workspace = true
+gpui-kit.workspace = true
+image = { version = "0.25", default-features = false }
+uuid.workspace = true
+chrono.workspace = true

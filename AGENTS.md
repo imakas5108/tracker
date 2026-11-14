@@ -13,9 +13,12 @@ the purpose, acceptance criteria, component boundaries, and delivery sequence.
 
 ## Implementation rules
 
-- Target Apple Silicon macOS. Begin in Swift with SwiftUI/AppKit and AVFoundation.
-  Do not add Rust, GPU processing, or a second backend without a documented,
-  measured reason. Cross-platform releases are optional future work.
+- The main line is now the Rust workspace in `rust/` (see `rust/README.md` and
+  `rust/DESIGN.md`). It targets Apple Silicon macOS first and keeps platform code
+  behind traits so Windows and Linux backends can be added later. The Swift app is
+  frozen as the reference implementation and test oracle: fix only what blocks a
+  comparison, and add new features in Rust. Do not add GPU processing or a second
+  media backend without a documented, measured reason.
 - Keep scientific algorithms, scheduling, media adapters, UI, and MCP protocol
   handling separate. UI and MCP must use the same validated command/state layer.
 - Do not impose a fixed product cap on video sessions. Bound active execution,
@@ -33,6 +36,12 @@ the purpose, acceptance criteria, component boundaries, and delivery sequence.
   Initial Tracker project-format compatibility is deferred.
 
 ## Verification and reporting
+
+- Rust: from `rust/`, run `cargo test --release`, then
+  `cargo build --release -p tracker-mcp -p tracker-app -p tracker-ui` and
+  `python3 scripts/mcp-e2e.py` for the packaged MCP workflow. Media and workflow
+  tests use the Java Tracker sample clips in `~/Tracker/videos` and print SKIPPED
+  when they are missing; report that distinction.
 
 - Build the local app with `zsh scripts/build-app.sh`; launch `build/Tracker.app`.
   Generate fixtures using `python3 scripts/make-tracking-fixtures.py` (ffmpeg), then
