@@ -3,10 +3,18 @@ import Darwin
 
 public enum LocalEndpoint {
     public static var directory: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("tracker-control-\(getuid())", isDirectory: true)
+        if let path = ProcessInfo.processInfo.environment["TRACKER_CONTROL_DIRECTORY"] {
+            return URL(fileURLWithPath:path,isDirectory:true)
+        }
+        return FileManager.default.temporaryDirectory.appendingPathComponent("tracker-control-\(getuid())", isDirectory: true)
     }
     public static var path: String { directory.appendingPathComponent("control.sock").path }
-    public static func prepare() throws {
+    public static func prepare(directory: URL = LocalEndpoint.directory) throws {
+        if let override = ProcessInfo.processInfo.environment["TRACKER_CONTROL_DIRECTORY"] {
+            guard override.hasPrefix("/"), !override.contains("\0") else {
+                throw AutomationError("invalid_endpoint", "TRACKER_CONTROL_DIRECTORY must be an absolute local directory.")
+            }
+        }
         let path = directory.path
         var info = stat()
         if lstat(path, &info) == 0 {
@@ -15,7 +23,7 @@ public enum LocalEndpoint {
             }
         } else {
             guard mkdir(path, 0o700) == 0 || errno == EEXIST else { throw socketError("create directory") }
-            try prepare()
+            try prepare(directory:directory)
         }
     }
 }
@@ -36,6 +44,7 @@ public final class LocalConnection: @unchecked Sendable {
     }
     deinit { Darwin.close(fd) }
     public static func connect(path: String = LocalEndpoint.path) throws -> LocalConnection {
+        if path == LocalEndpoint.path { try LocalEndpoint.prepare() }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw socketError("create socket") }
         let connection = LocalConnection(fd: fd)

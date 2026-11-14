@@ -113,6 +113,47 @@ final class AutomationTests: XCTestCase {
         XCTAssertNil(session.exportError)
     }
     @MainActor
+    func testAxesAndDerivativeCommandsPreserveQueuedTrackingAndRoundTrip() async throws {
+        guard FileManager.default.fileExists(atPath:source.path) else { throw XCTSkip("Generate fixtures.") }
+        let workspace = Workspace(), s = workspace.importVideo(source); try await ready(s)
+        let c = workspace.automation; c.allowControl(); defer { s.close() }
+        let track = s.createTrack(name:"Motion")
+        try s.recordPoint(CGPoint(x:30,y:45),trackID:track.id,time:0)
+        let blocker = UUID(); try await TrackingCapacity.shared.acquire(blocker)
+        defer { s.cancelTracking(); Task { await TrackingCapacity.shared.release(blocker) } }
+        let job = try s.beginTracking(trackID:track.id)
+        let axes = edit(s,extra:["origin_x":.number(30),"origin_y":.number(45),"angle_degrees":.number(90)])
+        let changed = await call(c,"set_axes",axes)
+        XCTAssertNil(changed.error); XCTAssertTrue(s.isTracking); XCTAssertEqual(s.lastTrackingID,job)
+        XCTAssertEqual(s.trackingJobs[job]?.revision,s.revision)
+        let revision = s.revision
+        let retry = await call(c,"set_axes",axes)
+        XCTAssertEqual(retry.result,changed.result); XCTAssertEqual(s.revision,revision)
+        let stale = await call(c,"configure_motion",axes.filter { !["origin_x","origin_y","angle_degrees"].contains($0.key) }.merging(["window":.number(5),"request_id":.string(UUID().uuidString)]) { _,new in new })
+        XCTAssertEqual(stale.error?.code,"stale_revision")
+        let method = await call(c,"configure_motion",edit(s,extra:["window":.number(5)]))
+        XCTAssertNil(method.error); XCTAssertTrue(s.isTracking)
+        try s.applyCalibration(Calibration(first:.zero,second:CGPoint(x:100,y:0),length:1,unit:"m"))
+        XCTAssertTrue(s.isTracking)
+        let document = s.snapshot()
+        XCTAssertEqual(document.version,2)
+        let restored = try JSONDecoder().decode(ProjectFile.self,from:JSONEncoder().encode(document)).validated()
+        XCTAssertEqual(restored.analysis.coordinates,s.coordinateSystem)
+        XCTAssertEqual(restored.analysis.motion,s.motionSettings)
+        s.cancelTracking(); await TrackingCapacity.shared.release(blocker)
+        let terminalRevision = s.trackingJobs[job]?.revision
+        let measured = await call(c,"get_measurements",["session_id":.string(s.id.uuidString),"track_id":.string(track.id.uuidString)])
+        XCTAssertNil(measured.error)
+        let row = try XCTUnwrap(measured.result?["measurements"].array?.first)
+        XCTAssertEqual(row["x"].number,0); XCTAssertEqual(row["y"].number,0)
+        XCTAssertNil(row["vx"].number)
+        XCTAssertEqual(row["derivative_unavailable_reason"].string,"insufficient_neighbors")
+        s.undo(); XCTAssertNil(s.calibration)
+        s.undo(); XCTAssertEqual(s.motionSettings.window,3)
+        s.undo(); XCTAssertEqual(s.coordinateSystem,CoordinateSystem())
+        XCTAssertEqual(s.trackingJobs[job]?.revision,terminalRevision)
+    }
+    @MainActor
     func testCalibrationAndFileFailuresAreStructured() async throws {
         guard FileManager.default.fileExists(atPath:source.path) else { throw XCTSkip("Generate fixtures.") }
         let workspace = Workspace(), s = workspace.importVideo(source); try await ready(s)

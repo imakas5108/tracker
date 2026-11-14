@@ -10,10 +10,13 @@ struct ProjectFile: Codable {
     var algorithm = "fixed-grayscale-ssd-v1"
 
     func validated() throws -> Self {
-        guard version == 1 else { throw ProjectError.unsupportedVersion }
+        guard [1,2].contains(version) else { throw ProjectError.unsupportedVersion }
         guard source.isFileURL, sourceSize.width.isFinite, sourceSize.height.isFinite,
               sourceSize.width > 0, sourceSize.height > 0, time.isFinite, time >= 0,
-              settings.isValid else { throw ProjectError.invalidData }
+              settings.isValid,
+              (analysis.coordinates ?? CoordinateSystem()).isRepresentable(size:sourceSize,calibration:analysis.calibration),
+              analysis.calibration.map({ ["m","cm","mm"].contains($0.unit) }) != false,
+              analysis.motion?.isValid != false else { throw ProjectError.invalidData }
         let trackIDs = analysis.tracks.map(\.id)
         guard Set(trackIDs).count == trackIDs.count,
               analysis.selectedTrackID == nil || trackIDs.contains(analysis.selectedTrackID!),

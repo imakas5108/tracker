@@ -34,3 +34,12 @@ It stays outside the video and analysis panes so the scientific workspace keeps
 its hierarchy. Connection counts and recent plain-language actions communicate
 real state. A native popover holds the bounded activity history and an honest
 empty state; there are no decorative agent icons, animations or invented metrics.
+
+Motion analysis follows Java Tracker's task placement: origin/angle fields appear
+with the Axes toolbar, axis-label menus choose plot variables, and a table Columns
+menu chooses quantities while time stays visible. Native controls and units keep
+the video/plot/table hierarchy intact. The derivative-window menu exposes real
+processing choices. Missing derivatives have an explicit marker and reason;
+source-provenance symbols remain visible. Axes use black-backed white labels and
+outlined handles so bright footage does not erase their labels. No new artwork,
+decorative surfaces, animations or fabricated measurements are introduced.

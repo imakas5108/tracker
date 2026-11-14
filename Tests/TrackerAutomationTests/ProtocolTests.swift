@@ -3,6 +3,20 @@ import Darwin
 @testable import TrackerAutomation
 
 final class ProtocolTests: XCTestCase {
+    func testPrivateRuntimeDirectoriesRejectBroadPermissionsAndSymlinks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:root) }
+        let runtime = root.appendingPathComponent("runtime")
+        try LocalEndpoint.prepare(directory:runtime)
+        var info = stat(); XCTAssertEqual(lstat(runtime.path,&info),0); XCTAssertEqual(info.st_mode & 0o777,0o700)
+        XCTAssertEqual(chmod(runtime.path,0o755),0)
+        XCTAssertThrowsError(try LocalEndpoint.prepare(directory:runtime))
+        XCTAssertEqual(chmod(runtime.path,0o700),0)
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at:link,withDestinationURL:runtime)
+        XCTAssertThrowsError(try LocalEndpoint.prepare(directory:link))
+    }
     func testRationalTimestampIntegerDoesNotPassThroughDouble() throws {
         struct Stamp: Codable { var value: Int64; var timescale: Int32 }
         let stamp = Stamp(value:9_123_499_531_892_099,timescale:1_000_000_000)
@@ -22,7 +36,7 @@ final class ProtocolTests: XCTestCase {
     func testWireRoundTripAndSchemas() throws {
         let request = AutomationRequest(command:"tracker_list_sessions",clientID:UUID())
         XCTAssertEqual(try JSONDecoder().decode(AutomationRequest.self,from:JSONEncoder().encode(request)).command,request.command)
-        XCTAssertEqual(Set(ToolCatalog.tools.map(\.name)).count,21)
+        XCTAssertEqual(Set(ToolCatalog.tools.map(\.name)).count,23)
         _ = try ToolCatalog.validate(request)
         XCTAssertThrowsError(try ToolCatalog.validate(AutomationRequest(command:"tracker_seek",arguments:["session_id":.string("a")],clientID:UUID())))
     }

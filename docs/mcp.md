@@ -1,6 +1,6 @@
 # Local Codex control
 
-Tracker exposes 21 tools through the official Swift MCP SDK, pinned to **0.11.0**.
+Tracker exposes 23 tools through the official Swift MCP SDK, pinned to **0.11.0**.
 `TrackerMCP` is bundled beside the app executable. Codex speaks MCP over stdio;
 the bridge sends length-prefixed JSON to Tracker over a Unix-domain socket.
 There is no HTTP listener, remote access, or continuous video/audio stream.
@@ -74,7 +74,8 @@ Commands do not resolve their target through the selected tab.
 | `tracker_start_tracking`, `tracker_get_job`, `tracker_cancel_job` | Start, inspect or cancel app-owned work, including queued jobs. |
 | `tracker_get_review`, `tracker_review_match` | Inspect unrecorded uncertainty, explicitly accept or skip, then follow the continuation job ID. |
 | `tracker_undo`, `tracker_redo` | Use the same scientific history as native controls. |
-| `tracker_get_measurements` | Paginate observations with exact frame stamps and provenance. |
+| `tracker_get_measurements` | Paginate observations and derived motion, with stamps, units, method and missing-value reasons. |
+| `tracker_set_axes`, `tracker_configure_motion` | Set source-pixel origin/angle and derivative window without restarting tracking. |
 | `tracker_save_project`, `tracker_export_csv` | Write explicit output paths; poll the returned operation. |
 
 A typical sequence is import → poll → inspect frame → add track → calibrate →
@@ -88,7 +89,9 @@ settings changes and delivered tracking batches. Seek operations have a separate
 generation; superseded seeks cannot silently succeed or cancel a later seek.
 
 Operations are retained for the app's lifetime. Inspect `state`, `error`, `result`,
-and the current session revision through `tracker_get_job`. File/import/seek
+and the revision captured by the job's latest update through `tracker_get_job`.
+Terminal revisions remain frozen; use `tracker_get_session` for the latest edit
+revision before a new mutation. File/import/seek
 states include queued, running, completed, failed and cancelled. Tracking also
 has awaiting_review and stopped. Cancelling completed work is harmless.
 Request deduplication and operation records do not survive app termination;
@@ -121,8 +124,11 @@ Predictions are never inserted as observations.
 Calibration requires two in-image source endpoints, a positive known length,
 and an explicit unit (`m`, `cm`, `mm`). Equal endpoints and implicit scale are
 rejected. Measurements expose both top-left source pixels and the app's
-bottom-left, y-up analysis coordinates. With no reference, units remain px.
-CSV uses the analysis coordinates and includes origin and match score.
+configured analysis coordinates (bottom-left and y-up by default). With no
+reference, units remain px. Velocity uses unit/s; acceleration uses unit/s².
+CSV uses the same calculations and adds derivative method, window, axes,
+exact frame stamps and missing-value reasons to the original columns.
+See [motion analysis](motion-analysis.md) for numerical conventions and gap handling.
 
 A low-quality/ambiguous match pauses the current segment. `get_review` returns
 its owning job/track IDs, candidate position, frame stamp, reason, score and
@@ -175,10 +181,27 @@ sequential-reader start. Indexing uses CoreMedia output timing, so container
 edit offsets agree with the native viewer; empty edit spans are not observations.
 Track selection is view state: changing it does not cancel tracking, enter undo
 history, mark scientific results dirty, or increment the edit revision. Explicit
-saves still serialize the selected track in the existing version-1 format.
+saves still serialize the selected track. New saves use project version 2 for
+axes and derivative settings; this app reads version-1 projects with legacy defaults.
 
 Tracking starts require a paused, ready source frame through both UI and MCP.
 Terminal operation records retain IDs, status, revision and errors without
 owning the closed video session. App-lifetime request deduplication is unchanged.
 See [the audit resolution report](audit-resolution-2026-11-14.md) for executed
 checks and the launch-environment limitation observed during verification.
+
+## Isolated development validation
+
+The app and bridge optionally accept an absolute `TRACKER_CONTROL_DIRECTORY`
+environment setting. It must be a private directory owned by the current user;
+symlinks and group/world permissions are rejected. Socket permissions, peer UID
+checks and exclusive ownership remain unchanged. This enables a separate native
+test app without re-enabling control or touching sessions in an existing workspace.
+macOS ignored a TMPDIR-only attempt in the validation environment.
+
+Launch the test app directly with `--agent-control` and that setting, and give
+its bridge the same environment. Keep this override scoped to the test processes;
+the normal Codex configuration and default endpoint are unchanged. Automatic
+launch remains designed for the regular app, so explicitly start isolated copies.
+Use `scripts/test-motion-mcp.py` for additional scientific acceptance checks after
+generating the ball-toss fixtures and building. It writes only `build/audit/motion`.

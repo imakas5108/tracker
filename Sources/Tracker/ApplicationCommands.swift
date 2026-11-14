@@ -53,6 +53,7 @@ extension VideoSession {
     func applyCalibration(_ value: Calibration) throws {
         try requireReady(); try validatePixel(value.first); try validatePixel(value.second)
         guard value.isValid, ["m","cm","mm"].contains(value.unit) else { throw AutomationError("invalid_calibration", "Supply distinct endpoints, a positive known length and m, cm or mm.") }
+        guard coordinateSystem.isRepresentable(size:size,calibration:value) else { throw MotionError.nonfiniteCoordinates }
         calibration = value
     }
     func configure(_ value: TrackingSettings) throws {
@@ -86,15 +87,15 @@ extension VideoSession {
     }
     func writeCSV(trackID: UUID, to destination: URL, overwrite: Bool) async throws {
         try requireReady(); try validateOutput(destination)
-        let rows = try requireTrack(trackID).points
-        let scale = calibration?.pixelsPerUnit ?? 1, height = size.height, units = unit
+        let rows = try await motionRows(trackID:trackID)
+        let units = unit, coordinate = coordinateSystem, configuration = motionSettings, dimensions = size
         try await Task.detached(priority: .utility) {
-            let lines = rows.map { "\($0.time),\($0.pixel.x/scale),\((height-$0.pixel.y)/scale),\($0.origin.rawValue),\($0.score.map { String($0) } ?? "")" }
-            let data = Data(("time_s,x_\(units),y_\(units),source,match_score\n"+lines.joined(separator:"\n")+"\n").utf8)
+            let data = try MotionOutput.csv(rows,unit:units,coordinates:coordinate,size:dimensions,settings:configuration)
             try Task.checkCancellation()
             try AtomicOutput.write(data, to: destination, overwrite: overwrite)
         }.value
     }
+
     private func validateOutput(_ destination: URL) throws {
         guard destination.resolvingSymlinksInPath() != url.resolvingSymlinksInPath() else {
             throw AutomationError("invalid_destination", "Analysis output cannot replace source footage.")

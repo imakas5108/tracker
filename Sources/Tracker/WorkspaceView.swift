@@ -149,7 +149,7 @@ struct SessionView: View {
                     }
                 }.buttonStyle(.bordered)
                 Toggle(isOn: $session.showAxes) { Label("Axes", systemImage: "arrow.up.and.right") }
-                    .toggleStyle(.button).help("Show the coordinate origin at the lower left of the video")
+                    .toggleStyle(.button).help("Show axes and edit their origin and angle")
                 Divider().frame(height: 20)
                 Button { Task { _ = await session.saveProject() } } label: {
                     Label(session.saving ? "Saving…" : "Save Project", systemImage: "square.and.arrow.down")
@@ -160,6 +160,10 @@ struct SessionView: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
             .disabled(session.loading || session.error != nil)
             Divider()
+            if session.showAxes {
+                AxisControls(session:session)
+                Divider()
+            }
             TrackingControls(session: session)
             Divider()
             HSplitView {
@@ -231,7 +235,7 @@ struct SessionView: View {
                 }
                 Button("Set Scale…") { session.pause(); session.showCalibration = true }
                     .disabled(session.loading || session.error != nil)
-                Text("Origin: bottom left\nx right · y up")
+                Text("Axes: \(session.coordinateSystem.angleDegrees, specifier: "%.1f")°\nShow Axes to set the origin.")
                     .font(.caption).foregroundStyle(.secondary).padding(.top, 8)
             }.padding(14)
         }.background(Color(nsColor: .windowBackgroundColor))
@@ -279,16 +283,23 @@ struct VideoCanvas: View {
                                     y: rect.minY + point.y / sourceSize.height * rect.height)
                         }
                         if session.showAxes {
-                            let origin = CGPoint(x: rect.minX + 1, y: rect.maxY - 1)
-                            var axes = Path()
-                            axes.move(to: CGPoint(x: origin.x, y: rect.minY)); axes.addLine(to: origin)
-                            axes.addLine(to: CGPoint(x: rect.maxX, y: origin.y))
-                            context.stroke(axes, with: .color(.black), lineWidth: 4)
-                            context.stroke(axes, with: .color(.white), lineWidth: 1)
-                            context.fill(Path(CGRect(x: rect.maxX - 21, y: rect.maxY - 21, width: 19, height: 19)), with: .color(.black))
-                            context.fill(Path(CGRect(x: rect.minX + 2, y: rect.minY + 2, width: 19, height: 19)), with: .color(.black))
-                            context.draw(Text("x").foregroundColor(.white), at: CGPoint(x: rect.maxX - 12, y: rect.maxY - 12))
-                            context.draw(Text("y").foregroundColor(.white), at: CGPoint(x: rect.minX + 12, y: rect.minY + 12))
+                            let origin = project(session.coordinateSystem.origin(in:sourceSize))
+                            let angle = session.coordinateSystem.angleDegrees * .pi/180
+                            let radius = max(rect.width,rect.height)*2
+                            context.clip(to:Path(rect))
+                            for (dx,dy,label) in [(cos(angle),-sin(angle),"x"),(-sin(angle),-cos(angle),"y")] {
+                                var path = Path()
+                                path.move(to:CGPoint(x:origin.x-dx*radius,y:origin.y-dy*radius))
+                                path.addLine(to:CGPoint(x:origin.x+dx*radius,y:origin.y+dy*radius))
+                                context.stroke(path,with:.color(.black),lineWidth:3)
+                                context.stroke(path,with:.color(.white),lineWidth:1)
+                                let labelPoint = CGPoint(x:origin.x+dx*45+5,y:origin.y+dy*45-8)
+                                context.fill(Path(CGRect(x:labelPoint.x-8,y:labelPoint.y-9,width:16,height:18)),with:.color(.black))
+                                context.draw(Text(label).foregroundColor(.white),at:labelPoint)
+                            }
+                            context.stroke(Path(ellipseIn:CGRect(x:origin.x-6,y:origin.y-6,width:12,height:12)),with:.color(.black),lineWidth:4)
+                            context.stroke(Path(ellipseIn:CGRect(x:origin.x-6,y:origin.y-6,width:12,height:12)),with:.color(.white),lineWidth:2)
+
                         }
                         for point in session.points {
                             let center = project(point.pixel)
@@ -326,6 +337,16 @@ struct VideoCanvas: View {
                             }
                         }
                     }.allowsHitTesting(false)
+                    if session.showAxes && session.tool == .navigate {
+                        Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance:3).onEnded { drag in
+                            let origin = session.coordinateSystem.origin(in:sourceSize)
+                            let center = CGPoint(x:rect.minX+origin.x/sourceSize.width*rect.width,y:rect.minY+origin.y/sourceSize.height*rect.height)
+                            guard hypot(drag.startLocation.x-center.x,drag.startLocation.y-center.y)<18,
+                                  let point = VideoGeometry.sourcePoint(drag.location,source:sourceSize,rect:rect) else { return }
+                            do { try session.setCoordinates(CoordinateSystem(origin:point,angleDegrees:session.coordinateSystem.angleDegrees)) }
+                            catch { session.exportError = error.localizedDescription }
+                        }).accessibilityLabel("Drag coordinate origin; use Origin fields for keyboard entry")
+                    }
                     if session.tool != .navigate && session.canMark {
                         Color.clear.contentShape(Rectangle())
                             .onTapGesture { location in

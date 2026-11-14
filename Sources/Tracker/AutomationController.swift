@@ -124,6 +124,8 @@ final class AutomationController: ObservableObject {
         case "tracker_add_track": label = "Added track " + (args["name"]?.string ?? "")
         case "tracker_mark_point": label = "Marked source pixel (\(args["x"]?.number ?? 0), \(args["y"]?.number ?? 0))"
         case "tracker_set_calibration": label = "Set scale reference \(args["length"]?.number ?? 0) \(args["unit"]?.string ?? "")"
+        case "tracker_set_axes": label = "Changed coordinate origin and angle"
+        case "tracker_configure_motion": label = "Changed derivative window"
         case "tracker_configure_tracking": label = "Changed tracking settings"
         case "tracker_start_tracking": label = "Started tracking"
         case "tracker_review_match": label = args["action"]?.string == "accept" ? "Accepted uncertain candidate" : "Skipped uncertain frame"
@@ -234,6 +236,10 @@ final class AutomationController: ObservableObject {
             try s.recordPoint(CGPoint(x:try a.requiredNumber("x"),y:try a.requiredNumber("y")),trackID:try a.requiredID("track_id"),time:try a.requiredNumber("time"))
         case "tracker_set_calibration":
             try s.applyCalibration(Calibration(first:CGPoint(x:try a.requiredNumber("x1"),y:try a.requiredNumber("y1")),second:CGPoint(x:try a.requiredNumber("x2"),y:try a.requiredNumber("y2")),length:try a.requiredNumber("length"),unit:try a.requiredString("unit")))
+        case "tracker_set_axes":
+            try s.setCoordinates(CoordinateSystem(origin:CGPoint(x:try a.requiredNumber("origin_x"),y:try a.requiredNumber("origin_y")),angleDegrees:try a.requiredNumber("angle_degrees")))
+        case "tracker_configure_motion":
+            try s.setMotionSettings(MotionSettings(window:try a.requiredInt("window")))
         case "tracker_configure_tracking":
             try s.configure(TrackingSettings(templateRadius:try a.requiredInt("template_radius"),searchRadius:try a.requiredInt("search_radius"),minimumScore:try a.requiredNumber("minimum_score"),minimumSeparation:try a.requiredNumber("minimum_separation")))
         case "tracker_start_tracking": return try tracking(s,id:s.beginTracking(trackID:try a.requiredID("track_id")))
@@ -293,19 +299,18 @@ final class AutomationController: ObservableObject {
             guard let review = s.review, let jobID = s.lastTrackingID, let trackID = s.reviewTrackID else { return .object(["pending":.bool(false),"revision":.number(Double(s.revision))]) }
             return .object(["pending":.bool(true),"job_id":.string(jobID.uuidString),"track_id":.string(trackID.uuidString),"revision":.number(Double(s.revision)),"time":.number(review.frame.stamp.seconds),"frame":try .from(review.frame.stamp),"candidate":review.evidence.position.map { .object(["x":.number($0.x),"y":.number($0.y)]) } ?? .null,"score":.number(review.evidence.score),"separation":.number(review.evidence.separation),"reason":review.evidence.reason.map(JSONValue.string) ?? .null,"recorded":.bool(false),"score_is_probability":.bool(false)])
         case "tracker_get_measurements":
-            let track = try s.requireTrack(a.requiredID("track_id"))
+            let trackID = try a.requiredID("track_id")
+            let revision = s.revision
+            let rows = try await s.motionRows(trackID:trackID)
             let offset = a["offset"] == nil ? 0 : try a.requiredInt("offset"), limit = a["limit"] == nil ? 100 : try a.requiredInt("limit")
-            guard (1...1000).contains(limit), offset <= track.points.count else { throw AutomationError("invalid_pagination", "limit must be 1...1000 and offset must not exceed the row count.") }
-            let end = offset+min(limit,track.points.count-offset)
-            let rows = try track.points[offset..<end].map { point -> JSONValue in
-                let coordinate = s.coordinates(point.pixel)
-                return .object(["id":.string(point.id.uuidString),"time":.number(point.time),"frame":try point.frame.map(JSONValue.from) ?? .null,"pixel_x":.number(point.pixel.x),"pixel_y":.number(point.pixel.y),"x":.number(coordinate.x),"y":.number(coordinate.y),"unit":.string(s.unit),"origin":.string(point.origin.rawValue),"match_score":point.score.map(JSONValue.number) ?? .null])
-            }
-            return .object(["revision":.number(Double(s.revision)),"total":.number(Double(track.points.count)),"offset":.number(Double(offset)),"next_offset":end < track.points.count ? .number(Double(end)) : .null,"measurements":.array(rows),"coordinate_origin":.string("bottom-left for x/y; top-left for pixel_x/pixel_y"),"score_is_probability":.bool(false)])
+            guard (1...1000).contains(limit), offset <= rows.count else { throw AutomationError("invalid_pagination", "limit must be 1...1000 and offset must not exceed the row count.") }
+            let end = offset+min(limit,rows.count-offset)
+            let values = try rows[offset..<end].map { try MotionOutput.json($0,unit:s.unit) }
+            return .object(["revision":.number(Double(revision)),"total":.number(Double(rows.count)),"offset":.number(Double(offset)),"next_offset":end < rows.count ? .number(Double(end)) : .null,"measurements":.array(values),"coordinate_origin":.string("configured axes for x/y; top-left source pixels for pixel_x/pixel_y"),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings),"score_is_probability":.bool(false)])
         default: throw AutomationError("unknown_tool",name)
         }
     }
     func describe(_ s: VideoSession) throws -> JSONValue {
-        .object(["session_id":.string(s.id.uuidString),"revision":.number(Double(s.revision)),"source_path":.string(s.url.path),"source_width":.number(s.size.width),"source_height":.number(s.size.height),"duration":.number(s.duration),"time":.number(s.time),"frame":try s.displayedFrame.map { try .from($0.stamp) } ?? .null,"loading":.bool(s.loading),"seeking":.bool(s.isSeeking),"playing":.bool(s.playing),"closed":.bool(s.closed),"error":s.error.map(JSONValue.string) ?? .null,"calibration":try s.calibration.map(JSONValue.from) ?? .null,"settings":try .from(s.settings),"tracks":.array(s.tracks.map { .object(["track_id":.string($0.id.uuidString),"name":.string($0.name),"count":.number(Double($0.points.count))]) }),"job_id":s.lastTrackingID.map { .string($0.uuidString) } ?? .null,"job_state":.string(s.jobState),"dirty":.bool(s.isDirty)])
+        .object(["session_id":.string(s.id.uuidString),"revision":.number(Double(s.revision)),"source_path":.string(s.url.path),"source_width":.number(s.size.width),"source_height":.number(s.size.height),"duration":.number(s.duration),"time":.number(s.time),"frame":try s.displayedFrame.map { try .from($0.stamp) } ?? .null,"loading":.bool(s.loading),"seeking":.bool(s.isSeeking),"playing":.bool(s.playing),"closed":.bool(s.closed),"error":s.error.map(JSONValue.string) ?? .null,"calibration":try s.calibration.map(JSONValue.from) ?? .null,"settings":try .from(s.settings),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings),"tracks":.array(s.tracks.map { .object(["track_id":.string($0.id.uuidString),"name":.string($0.name),"count":.number(Double($0.points.count))]) }),"job_id":s.lastTrackingID.map { .string($0.uuidString) } ?? .null,"job_state":.string(s.jobState),"dirty":.bool(s.isDirty)])
     }
 }

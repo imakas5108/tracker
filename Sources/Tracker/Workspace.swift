@@ -31,7 +31,16 @@ final class VideoSession: ObservableObject, Identifiable {
     @Published var showAxes = false
     @Published var calibrationPoints: [CGPoint] = []
     @Published var showCalibration = false
-    @Published private(set) var analysis = AnalysisState() { didSet { if oldValue != analysis { revision += 1 } } }
+    @Published private(set) var analysis = AnalysisState() {
+        didSet {
+            if oldValue != analysis {
+                revision += 1
+                if isTracking || review != nil { recordTrackingState() }
+                refreshMotion(preservingRows:preserveMotionOnNextChange)
+            }
+            preserveMotionOnNextChange = false
+        }
+    }
     @Published private(set) var revision = 0
     private(set) var lastTrackingID: UUID?
     var trackingJobs: [UUID: SessionTrackingJob] = [:]
@@ -56,17 +65,33 @@ final class VideoSession: ObservableObject, Identifiable {
     private var runID: UUID?
     private(set) var closed = false
     private var restored: ProjectFile?
+    let motionCalculator = MotionCalculator()
+    let motionData = MotionPresentation()
+    private var motionTask: Task<Void, Never>?
+    private var motionGeneration = UUID()
+    private var trackingCheckpointNeeded = true
+    private var preserveMotionOnNextChange = false
+    var coordinateSystem: CoordinateSystem { analysis.coordinates ?? CoordinateSystem() }
+    var motionSettings: MotionSettings { analysis.motion ?? MotionSettings() }
 
     var tracks: [PointTrack] { analysis.tracks }
     @Published var selectedTrackID: UUID? {
-        didSet { if let id = selectedTrackID, !tracks.contains(where: { $0.id == id }) { selectedTrackID = nil } }
+        didSet {
+            if let id = selectedTrackID, !tracks.contains(where: { $0.id == id }) { selectedTrackID = nil }
+            if oldValue != selectedTrackID { refreshMotion() }
+        }
     }
     private func reconcileSelection() {
         if !tracks.contains(where: { $0.id == selectedTrackID }) { selectedTrackID = tracks.first?.id }
     }
     var calibration: Calibration? {
         get { analysis.calibration }
-        set { edit { $0.calibration = newValue }; calibrationPoints = [] }
+        set {
+            guard coordinateSystem.isRepresentable(size:size,calibration:newValue) else {
+                exportError = MotionError.nonfiniteCoordinates.localizedDescription; return
+            }
+            editDerived { $0.calibration = newValue }; calibrationPoints = []
+        }
     }
     var name: String { url.lastPathComponent }
     var selectedTrack: PointTrack? { tracks.first { $0.id == selectedTrackID } }
@@ -120,6 +145,58 @@ final class VideoSession: ObservableObject, Identifiable {
     func undo() { cancelTracking(); history.undo(); analysis = history.state; reconcileSelection(); calibrationPoints = [] }
     func redo() { cancelTracking(); history.redo(); analysis = history.state; reconcileSelection(); calibrationPoints = [] }
 
+    func editDerived(_ change: (inout AnalysisState) -> Void) {
+        var next = analysis; change(&next)
+        history.replace(next.scientificState); analysis = history.state
+        trackingCheckpointNeeded = true
+    }
+    func setCoordinates(_ value: CoordinateSystem) throws {
+        try requireReady()
+        guard value.isValid else { throw MotionError.invalidSettings }
+        guard value.isRepresentable(size:size,calibration:calibration) else { throw MotionError.nonfiniteCoordinates }
+        editDerived { $0.coordinates = value }
+    }
+    func setMotionSettings(_ value: MotionSettings) throws {
+        try requireReady()
+        guard value.isValid else { throw MotionError.invalidSettings }
+        editDerived { $0.motion = value }
+    }
+    func motionRows(trackID: UUID) async throws -> [MotionRow] {
+        try requireReady()
+        let points = try requireTrack(trackID).points
+        let key = MotionKey(revision:revision,trackID:trackID)
+        let rows = try await motionCalculator.rows(key:key,points:points,sourceTimes:frameTimes,size:size,
+            calibration:calibration,coordinates:coordinateSystem,settings:motionSettings)
+        guard !closed, revision == key.revision else {
+            throw AutomationError("stale_revision", "Measurements changed during calculation; inspect and retry.")
+        }
+        return rows
+    }
+    private func refreshMotion(preservingRows: Bool = false) {
+        motionTask?.cancel(); motionGeneration = UUID()
+        let generation = motionGeneration
+        if !preservingRows { motionData.clear() }
+        guard !closed, !loading, let trackID = selectedTrackID else { return }
+        let calculator = motionCalculator, points = points, sourceTimes = frameTimes, size = size
+        let calibration = calibration, coordinates = coordinateSystem, configuration = motionSettings
+        let key = MotionKey(revision:revision,trackID:trackID)
+        motionData.updating = true
+        motionTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for:.milliseconds(80))
+                let rows = try await calculator.rows(key:key,points:points,sourceTimes:sourceTimes,size:size,
+                    calibration:calibration,coordinates:coordinates,settings:configuration)
+                try Task.checkCancellation()
+                guard let self, !self.closed, self.motionGeneration == generation else { return }
+                self.motionData.set(rows,revision:key.revision)
+            } catch {
+                guard let self, self.motionGeneration == generation else { return }
+                self.motionData.updating = false
+                if !(error is CancellationError) { self.motionData.error = error.localizedDescription }
+            }
+        }
+    }
+
     private func load() async {
         do {
             let asset = AVURLAsset(url: url)
@@ -135,7 +212,7 @@ final class VideoSession: ObservableObject, Identifiable {
             guard !closed, seconds.isFinite, seconds > 0 else { throw MediaError.noFrames }
             size = CGSize(width: abs(dimensions.width), height: abs(dimensions.height))
             if let restored, restored.sourceSize != size { throw ProjectError.sourceMismatch }
-            frameTimes = stamps; duration = seconds
+            frameTimes = stamps; duration = seconds; refreshMotion()
             let item = AVPlayerItem(asset: asset)
             statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
                 if item.status == .failed {
@@ -144,10 +221,10 @@ final class VideoSession: ObservableObject, Identifiable {
                 }
             }
             player.replaceCurrentItem(with: item)
-            loading = false; seek(restored?.time ?? 0); restored = nil
+            loading = false; refreshMotion(); seek(restored?.time ?? 0); restored = nil
         } catch {
             guard !closed, !Task.isCancelled else { return }
-            self.error = "Could not open \(name). \(error.localizedDescription)"; loading = false
+            self.error = "Could not open \(name). \(error.localizedDescription)"; loading = false; refreshMotion()
         }
     }
 
@@ -228,8 +305,7 @@ final class VideoSession: ObservableObject, Identifiable {
         }
     }
     func coordinates(_ point: CGPoint) -> CGPoint {
-        let scale = calibration?.pixelsPerUnit ?? 1
-        return CGPoint(x: point.x/scale, y: (size.height-point.y)/scale)
+        coordinateSystem.convert(point,size:size,calibration:calibration)
     }
 
     func startTracking(seed override: Measurement? = nil, after: Double? = nil, trackID explicitTrack: UUID? = nil) {
@@ -243,16 +319,14 @@ final class VideoSession: ObservableObject, Identifiable {
         trackingError = nil; jobState = "Queued"; review = nil
         processedFrames = 0; runSummary = ""
         let sourceURL = url, configuration = settings
-        // One undo operation restores the analysis before the complete run.
-        history.replace(analysis)
-        let before = analysis
+        trackingCheckpointNeeded = true
         trackingTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 try await TrackingCapacity.shared.acquire(token)
                 do {
                 await self?.trackingStarted(token)
                 try await TrackingEngine.run(url: sourceURL, seed: chosen, settings: configuration, after: after) { [weak self] event in
-                    await self?.receive(event, token: token, trackID: trackID, before: before)
+                    await self?.receive(event, token: token, trackID: trackID)
                 }
                 } catch { await TrackingCapacity.shared.release(token); throw error }
                 await TrackingCapacity.shared.release(token)
@@ -262,7 +336,7 @@ final class VideoSession: ObservableObject, Identifiable {
         }
     }
     private func trackingStarted(_ token: UUID) { if runID == token { jobState = "Running" } }
-    private func receive(_ event: TrackingEvent, token: UUID, trackID: UUID, before: AnalysisState) {
+    private func receive(_ event: TrackingEvent, token: UUID, trackID: UUID) {
         guard runID == token, !closed, let index = analysis.tracks.firstIndex(where: { $0.id == trackID }) else { return }
         let batch: [Measurement]
         switch event {
@@ -275,10 +349,12 @@ final class VideoSession: ObservableObject, Identifiable {
             runSummary = String(format: "%d frames · %.2f s · %.1f frames/s", count, seconds, Double(count)/max(seconds, 0.000001))
         }
         var next = analysis
+        let appendOnly = batch.first.map { $0.time > (analysis.tracks[index].points.last?.time ?? -.infinity)+0.000001 } ?? false
         next.tracks[index].mergeAutomatic(batch)
         if next != analysis {
-            // Coalesced delivery: one checkpoint per run, not per UI refresh.
-            if analysis == before { history.replace(next) } else { history.updateCurrent(next) }
+            // Explicit derived-data edits split the run into independently undoable checkpoints.
+            if trackingCheckpointNeeded { history.replace(next); trackingCheckpointNeeded = false } else { history.updateCurrent(next) }
+            preserveMotionOnNextChange = appendOnly && trackID == selectedTrackID
             analysis = next
         }
         recordTrackingState()
@@ -316,7 +392,7 @@ final class VideoSession: ObservableObject, Identifiable {
     }
     func snapshot() -> ProjectFile {
         var persisted = analysis; persisted.selectedTrackID = selectedTrackID
-        return ProjectFile(source: url, sourceSize: size, analysis: persisted, time: displayedFrame?.stamp.seconds ?? time, settings: settings)
+        return ProjectFile(version: 2, source: url, sourceSize: size, analysis: persisted, time: displayedFrame?.stamp.seconds ?? time, settings: settings)
     }
     func saveProject() async -> Bool {
         guard !loading, !saving else { return false }
@@ -346,7 +422,7 @@ final class VideoSession: ObservableObject, Identifiable {
         }
     }
     func close() {
-        closed = true; cancelTracking(); loadTask?.cancel(); seekTask?.cancel(); seekGeneration = UUID()
+        closed = true; motionTask?.cancel(); cancelTracking(); loadTask?.cancel(); seekTask?.cancel(); seekGeneration = UUID()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
         statusObserver = nil; player.replaceCurrentItem(with: nil); displayedFrame = nil

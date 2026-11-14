@@ -2,7 +2,7 @@
 import importlib.util, json, os, subprocess, time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
-OUT=ROOT/'build/audit/resolution';OUT.mkdir(parents=True,exist_ok=True)
+OUT=ROOT/os.environ.get('TRACKER_BENCHMARK_OUTPUT','build/audit/resolution');OUT.mkdir(parents=True,exist_ok=True)
 spec=importlib.util.spec_from_file_location('mcp_client',ROOT/'scripts/test-mcp.py')
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
@@ -27,7 +27,7 @@ def main():
             jobs=[];began=time.monotonic()
             for sid,tid in sessions:jobs.append(c.mutate('start_tracking',sid,track_id=tid))
             times=[];states={};peak=0;queued=False
-            pid=subprocess.check_output(['pgrep','-x','Tracker'],text=True).splitlines()[-1]
+            pid=os.environ.get('TRACKER_BENCHMARK_PID') or subprocess.check_output(['pgrep','-x','Tracker'],text=True).splitlines()[-1]
             while len(states)<count:
                 for job in jobs:
                     if job['job_id'] in states:continue

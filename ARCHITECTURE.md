@@ -8,6 +8,12 @@ scheduling remain future work; real-footage performance is unvalidated. A local
 Swift MCP bridge now controls the shared application commands; connection and
 verification details are recorded in `docs/mcp.md`.
 
+Motion analysis adds static configurable axes and timestamp-aware position,
+velocity, speed and acceleration through a shared numerical pipeline. Derivative
+settings and axes persist in version-2 projects; version-1 inputs retain legacy
+defaults. See `docs/motion-analysis.md`. This does not change matching algorithms
+or widen the tracking scheduler's single active execution slot.
+
 ## Purpose
 
 Build a native macOS video-analysis application for Apple Silicon Macs that

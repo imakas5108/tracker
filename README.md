@@ -34,8 +34,13 @@ still run. Do not report skipped integration tests as validated.
    Each source timestamp holds one point per track; another click replaces it.
 4. Choose Calibrate, click two endpoints, and enter their known distance and unit;
    or use Set Scale to enter endpoint pixel coordinates directly.
-   Coordinates use a bottom-left origin, x right, y up. Without scale they use px.
-5. Inspect x/y plots and the table. Remove Last removes the latest-time point.
+   Coordinates default to a bottom-left origin, x right, y up. Without scale they use px.
+   Show Axes to set the source-pixel origin and counterclockwise angle, or drag
+   the origin in Navigate mode.
+5. Select position, velocity, speed or acceleration from the plot-axis menus;
+   choose visible table columns with Columns. The derivative menu defaults to
+   three points; 5/7/9-point windows optionally smooth derivatives. Missing
+   neighbors and gaps have no derivatives. Remove Last removes the latest-time point.
    Export CSV writes the selected track's measurements.
 
 ## Autotracking and projects
@@ -64,10 +69,16 @@ Use Enter Position (Command-Shift-M) for keyboard entry of source pixel coordina
 Menus, transport, selectors, and dialogs use native controls. Full scientific,
 accessibility, large-data, and sustained performance validation remain later work.
 CSV formatting and file writing run in the background. CSV includes measurement
-origin and match score. Source-frame marking is blocked while a seek is pending;
+origin, match score, motion data, missing-value reasons and method/axes metadata.
+Source-frame marking is blocked while a seek is pending;
 the paused image and its actual source timestamp are the marking reference.
 Save before closing; tab-close and application-quit prompts protect unsaved edits.
-Configurable coordinate origins and Tracker file compatibility remain deferred. Full production accessibility and large-data validation remain open.
+Tracker file compatibility remains deferred. Full production accessibility and large-data rendering validation remain open.
+New saves use project version 2; version-1 files still open with compatible defaults.
+Read [the motion-analysis guide](docs/motion-analysis.md) for coordinate conventions,
+numerical methods, workflow references and limitations.
+See [delivery verification](docs/motion-delivery-2026-11-14.md) for release tests,
+Codex/native control checks, performance measurements and visual-review limits.
 
 See [the tracking validation report](docs/tracking-baseline-2026-11-14.md) for measured
 results and limitations. The current engine remains Swift; no Rust speedup is claimed.

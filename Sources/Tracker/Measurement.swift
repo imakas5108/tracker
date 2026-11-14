@@ -41,6 +41,8 @@ struct AnalysisState: Codable, Equatable {
     var tracks: [PointTrack] = []
     var selectedTrackID: UUID?
     var calibration: Calibration?
+    var coordinates: CoordinateSystem?
+    var motion: MotionSettings?
     var scientificState: Self {
         var state = self; state.selectedTrackID = nil; return state
     }

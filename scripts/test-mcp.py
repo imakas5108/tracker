@@ -14,11 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'build/mcp-e2e'
 
 class Client:
-    def __init__(self):
+    def __init__(self, env=None):
         self.messages = queue.Queue()
         self.serial = 0
         self.stderr = (OUT / ('bridge-' + uuid.uuid4().hex + '.log')).open('w')
-        self.process = subprocess.Popen([str(ROOT / 'build/Tracker.app/Contents/MacOS/TrackerMCP')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr, text=True, bufsize=1)
+        self.process = subprocess.Popen([str(ROOT / 'build/Tracker.app/Contents/MacOS/TrackerMCP')], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.stderr, text=True, bufsize=1, env=env)
         def read():
             for line in self.process.stdout:
                 try: self.messages.put(json.loads(line))
@@ -72,7 +72,7 @@ def main():
     c = Client()
     try:
         tools = c.rpc('tools/list',{})['result']['tools']
-        assert len(tools) == 21, len(tools)
+        assert len(tools) == 23, len(tools)
         imported = c.wait(c.mutate('import_video',path=str(ROOT / 'build/fixtures/clean.mov')))
         sid = imported['session_id']
         start = c.tool('get_session',session_id=sid)
@@ -102,6 +102,9 @@ def main():
         # End the stdio connection; the app retains and completes its own job.
         c.close(); c = Client()
         completed = c.wait(job)
+        c.mutate('set_axes',sid,origin_x=0,origin_y=120,angle_degrees=0)
+        assert c.tool('get_session',session_id=sid)['revision'] > completed['revision']
+        assert c.tool('get_job',job_id=job['job_id'])['revision'] == completed['revision']
         rows = c.tool('get_measurements',session_id=sid,track_id=tid,offset=0,limit=30)
         assert rows['total']==60, rows
         later = c.tool('get_measurements',session_id=sid,track_id=tid,offset=30,limit=30,expected_revision=rows['revision'])
@@ -143,7 +146,7 @@ def main():
         assert missing['error']['code']=='relink_required'
         c.wait(c.mutate('open_project',path=str(OUT/'missing.tracker.json'),relink_path=str(ROOT/'build/fixtures/clean.mov')))
         c.mutate('select_session',rsid)
-        report = dict(initialization=c.initialized,tool_count=len(tools),clean_job=completed,save=saved,export=exported,review=review,checks=['stdio initialization','native import','PNG delivery/crop mapping','revision rejection','retry deduplication/conflict','explicit calibration','seed and autotracking','reconnect preserves jobs','paginated measurements','no-clobber save','CSV export','project reopen','uncertain evidence stays unrecorded','explicit skip','cancel pending review','missing source relink error','explicit relink'])
+        report = dict(initialization=c.initialized,tool_count=len(tools),clean_job=completed,save=saved,export=exported,review=review,checks=['stdio initialization','native import','PNG delivery/crop mapping','revision rejection','retry deduplication/conflict','explicit calibration','seed and autotracking','reconnect preserves jobs','terminal job revision retained','paginated measurements','no-clobber save','CSV export','project reopen','uncertain evidence stays unrecorded','explicit skip','cancel pending review','missing source relink error','explicit relink'])
         (OUT/'report.json').write_text(json.dumps(report,indent=2))
         print(json.dumps({'passed':len(report['checks']),'report':str(OUT/'report.json'),'review_session_id':rsid}))
     finally: c.close()
