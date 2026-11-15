@@ -72,7 +72,7 @@ def main():
     c = Client()
     try:
         tools = c.rpc('tools/list',{})['result']['tools']
-        assert len(tools) == 23, len(tools)
+        assert len(tools) == 25, len(tools)
         imported = c.wait(c.mutate('import_video',path=str(ROOT / 'build/fixtures/clean.mov')))
         sid = imported['session_id']
         start = c.tool('get_session',session_id=sid)

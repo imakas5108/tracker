@@ -15,7 +15,7 @@ struct TrackerApp: App {
                     workspace.automation.start(enabled: CommandLine.arguments.contains("--agent-control"))
                     DispatchQueue.main.async { lifecycle.attachWindow() }
                     NSApp.setActivationPolicy(.regular)
-                    NSApp.activate(ignoringOtherApps: true)
+                    if !CommandLine.arguments.contains("--benchmark-background") { NSApp.activate(ignoringOtherApps: true) }
                     let paths = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
                     if workspace.sessions.isEmpty { workspace.importVideos(paths.map { URL(fileURLWithPath: $0) }) }
                 }

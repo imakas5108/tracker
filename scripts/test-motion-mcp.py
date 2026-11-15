@@ -36,7 +36,10 @@ def main():
     legacy.write_text(json.dumps(fixture))
     c = client_module.Client()
     try:
-        assert len(c.rpc('tools/list', {})['result']['tools']) == 23
+        tools = c.rpc('tools/list', {})['result']['tools']
+        assert len(tools) == 25
+        export_schema = next(t for t in tools if t['name'] == 'tracker_export_csv')['inputSchema']
+        assert {'profile', 'decimal_separator', 'decimal_places', 'include_provenance'} <= set(export_schema['properties'])
         sid = c.wait(c.mutate('open_project', path=str(legacy)))['session_id']
         tid = fixture['analysis']['selectedTrackID']
         state = c.tool('get_session', session_id=sid)
@@ -92,6 +95,31 @@ def main():
                 assert (actual[column] == '') == (row[key] is None)
                 if actual[column]: near(float(actual[column]), row[key])
             assert actual['derivative_method'] == 'local-quadratic-v1'
+        excel = OUT / 'motion-excel.csv'
+        c.wait(c.mutate('export_csv', sid, track_id=tid, path=str(excel), overwrite=True,
+                        profile='excel', decimal_separator='comma', decimal_places=6))
+        assert excel.read_bytes().startswith(b'\xef\xbb\xbfsep=;\r\n')
+        with excel.open(encoding='utf-8-sig', newline='') as stream:
+            assert next(stream) == 'sep=;\r\n'
+            excel_rows = list(csv.DictReader(stream, delimiter=';'))
+        assert len(excel_rows) == len(smooth['measurements'])
+        assert list(excel_rows[0]) == ['t (s)', 'x (m)', 'y (m)', 'vx (m/s)', 'vy (m/s)', 'v (m/s)', 'ax (m/s²)', 'ay (m/s²)']
+        for actual, row in zip(excel_rows, smooth['measurements']):
+            for column, key in [('t (s)', 'time'), ('x (m)', 'x'), ('y (m)', 'y'), ('vx (m/s)', 'vx'), ('ay (m/s²)', 'ay')]:
+                assert (actual[column] == '') == (row[key] is None)
+                if actual[column]: near(float(actual[column].replace(',', '.')), row[key], 5.1e-7)
+        full_excel = OUT / 'motion-excel-full.csv'
+        c.wait(c.mutate('export_csv', sid, track_id=tid, path=str(full_excel), overwrite=True,
+                        profile='excel', decimal_separator='dot', include_provenance=True))
+        with full_excel.open(encoding='utf-8-sig', newline='') as stream:
+            assert next(stream) == 'sep=,\r\n'
+            full_rows = list(csv.DictReader(stream))
+        assert len(full_rows[0]) == 22
+        assert full_rows[3]['derivative_method'] == 'local-quadratic-v1'
+        rejected = c.raw('export_csv', session_id=sid, expected_revision=c.tool('get_session', session_id=sid)['revision'],
+                         request_id=str(uuid.uuid4()), track_id=tid, path=str(excel), profile='standard', decimal_separator='comma')
+        assert rejected['isError']
+        assert c.tool('get_measurements', session_id=sid, track_id=tid)['measurements'] == smooth['measurements']
         reopened = c.wait(c.mutate('open_project', path=str(saved)))['session_id']
         restored = c.tool('get_measurements', session_id=reopened, track_id=tid)
         assert restored['measurements'] == smooth['measurements']
@@ -116,10 +144,11 @@ def main():
             near(rounded_rows[i]['time'], i*1001/24000, 1e-12)
             near(rounded_rows[i]['vx'], rows[i]['vx']*100, 1e-6)
         c.mutate('select_session', reopened)
-        report = dict(checks=['23 advertised tools', 'version-1 defaults', 'explicit calibration',
+        report = dict(checks=['25 advertised tools', 'version-1 defaults', 'explicit calibration',
                               'axes origin and rotation', 'retry deduplication/conflict', 'stale mutation rejection',
                               'fractional timestamp finite differences', 'manual correction invalidation/undo',
-                              'optional smoothing preserves raw positions', 'CSV/MCP equality', 'version-2 save/reopen',
+                              'optional smoothing preserves raw positions', 'CSV/MCP equality', 'regional Excel CSV and explicit rounding',
+                              'optional CSV provenance', 'invalid CSV options rejected', 'export preserves measurements', 'version-2 save/reopen',
                               'gaps stay unavailable', 'rational stamps override rounded legacy seconds'],
                       session_id=reopened, track_id=tid, measurements=smooth)
         (OUT / 'mcp-report.json').write_text(json.dumps(report, indent=2))

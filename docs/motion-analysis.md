@@ -62,10 +62,11 @@ and transforms exceeding finite numerical range are rejected.
 - Exact rational frame stamps are authoritative when present, including older
   projects whose floating-point seconds were rounded. Legacy observations
   without a stamp use their stored seconds and source-timeline lookup.
-- A window must contain consecutive source frames. VFR intervals are supported;
-  skipped/unrecorded frames break the window. There is no automatic interpolation,
+- A window must contain consecutive selected clip steps. VFR intervals are supported;
+  unrecorded selected steps break the window. There is no automatic interpolation,
   extrapolation, nominal-FPS timing or special treatment of unaccepted candidates.
-  Intentional every-nth-frame sampling is not yet a configurable analysis mode.
+  Intentional every-nth-frame sampling uses the original selected timestamps;
+  outside-clip observations cannot fill derivative windows. See [clip controls](clips.md).
 - The first/last half-window observations lack derivatives. Invalid intervals,
   missing source timing and ill-conditioned windows also produce unavailable
   derivatives, never fabricated zeros. Native cells show a missing-value mark
@@ -93,18 +94,29 @@ split delivered tracking history into separate undo checkpoints; Undo/Redo still
 stop active tracking. The source observations and matching settings remain
 independent of the derived coordinate system.
 
-New saves use project version 2. This app reads versions 1 and 2; missing axes and
+Full-source SSD-only saves use project version 2. This app reads versions 1–4; missing axes and
 motion settings get the legacy coordinates and three-point default. Older builds
-reject version 2 instead of silently ignoring its scientific settings. Derived
+reject version 2 instead of silently ignoring its scientific settings. Version 3
+is required for normalized matching provenance, as described below. A non-default
+clip requires version 4; versions 1–3 open with full-source sampling. Derived
 arrays are recomputed, not serialized. Project files retain source observations,
 exact stamps, calibration, axes and method settings.
 
-CSV retains its original first five columns and appends vx/vy/speed/ax/ay, missing
+Standard CSV retains its original first five columns and appends vx/vy/speed/ax/ay, missing
 reasons, method, window, source-pixel origin, angle and exact frame-stamp fields.
 For metres, names include vx_m_s and ax_m_s2. MCP get_measurements preserves its
 existing fields and adds the same quantities, units, missing reasons and motion
 metadata. New tools set_axes and configure_motion share the native commands,
 revision checks, retry deduplication, history and agent action log.
+Provenance CSV now appends `tracking_method` after those original fields. MCP
+measurements return nullable `matching_method`. New normalized-correlation
+observations require project version 3 even if current settings return to SSD;
+their recorded method survives settings changes and reopening.
+
+Native Export CSV now defaults to a compact Excel profile with explicit regional
+separators. Full precision remains the default, and rounding is opt-in. The
+Standard profile preserves the original machine-readable schema. See
+[CSV export](csv-export.md) for details and executed Excel checks.
 
 See [the delivery verification report](motion-delivery-2026-11-14.md) for executed tests, measured performance
 and the native screen-capture limitation.

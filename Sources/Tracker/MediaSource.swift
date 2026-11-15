@@ -37,7 +37,7 @@ final class SequentialFrames {
     private let occupiedRanges: [CMTimeRange]
     private let context = CIContext(options: [.cacheIntermediates: false])
 
-    init(url: URL, start: CMTime = .zero) async throws {
+    init(url: URL, start: CMTime = .zero, endExclusive: CMTime? = nil) async throws {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw MediaError.noFrames }
         transform = try await track.load(.preferredTransform)
@@ -46,17 +46,22 @@ final class SequentialFrames {
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         output.alwaysCopiesSampleData = false
         reader.add(output)
-        if start > .zero { reader.timeRange = CMTimeRange(start: start, duration: .positiveInfinity) }
+        if let endExclusive {
+            guard endExclusive > start else { throw ClipError.invalidBounds }
+            reader.timeRange = CMTimeRange(start:start,duration:CMTimeSubtract(endExclusive,start))
+        } else if start > .zero { reader.timeRange = CMTimeRange(start: start, duration: .positiveInfinity) }
         guard reader.startReading() else { throw reader.error ?? MediaError.decode }
     }
 
-    func next() throws -> DecodedFrame? {
+    func next(including include: ((FrameStamp) -> Bool)? = nil) throws -> DecodedFrame? {
         try Task.checkCancellation()
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
             if (CMGetAttachment(sample, key: kCMSampleBufferAttachmentKey_EmptyMedia, attachmentModeOut: nil) as? Bool) == true { continue }
             let stamp = CMSampleBufferGetOutputPresentationTimeStamp(sample)
             guard occupiedRanges.contains(where: { CMTimeRangeContainsTime($0, time: stamp) }) else { continue }
+            let frameStamp = FrameStamp(value:stamp.value,timescale:stamp.timescale)
+            if let include, !include(frameStamp) { continue }
             // Empty edit-list spans are timeline gaps, not observed frames.
             guard let buffer = CMSampleBufferGetImageBuffer(sample) else {
                 if CMSampleBufferGetTotalSampleSize(sample) == 0 { continue }
@@ -64,7 +69,7 @@ final class SequentialFrames {
             }
             let ci = CIImage(cvPixelBuffer: buffer).transformed(by: transform)
             guard let image = context.createCGImage(ci, from: ci.extent) else { throw MediaError.decode }
-            return DecodedFrame(stamp: FrameStamp(value: stamp.value, timescale: stamp.timescale), image: image)
+            return DecodedFrame(stamp:frameStamp, image:image)
         }
         if reader.status == .failed { throw reader.error ?? MediaError.decode }
         return nil

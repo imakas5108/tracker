@@ -46,13 +46,16 @@ struct TrackingSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Tracking settings").font(.title2.weight(.semibold))
+            Picker("Matching method", selection: $settings.matchingMethod) {
+                ForEach(MatchingMethod.allCases) { Text($0.title).tag($0) }
+            }
             Stepper("Template radius: \(settings.templateRadius) px", value: $settings.templateRadius, in: 3...48)
             Stepper("Search radius: \(settings.searchRadius) px", value: $settings.searchRadius, in: 4...128)
             Text("The template must include visible detail. Search stays local to the last accepted position; a lost target pauses for review.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack { Text("Minimum score"); TextField("Minimum score", value: $settings.minimumScore, format: .number) }
             HStack { Text("Candidate separation"); TextField("Candidate separation", value: $settings.minimumSeparation, format: .number) }
-            Text("Scores are fixed-template grayscale similarity, not confidence probabilities. Settings apply to the next run.")
+            Text("Scores and separation depend on the matching method; thresholds are not interchangeable or confidence probabilities. Templates remain fixed. Settings apply to the next run.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()

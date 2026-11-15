@@ -4,15 +4,28 @@ Status: native Swift analysis baseline with source-frame marking, versioned proj
 save/reopen, undo/redo, fixed-template autotracking, uncertain-match review, and
 bounded job admission. Initial synthetic release benchmarks are recorded in
 `docs/tracking-baseline-2026-11-14.md`. Adaptive tracking, dynamic parallel
-scheduling remain future work; real-footage performance is unvalidated. A local
+scheduling remain future work. A bounded [real-footage stress test](docs/dji-stress-2026-11-15.md)
+found prompt import but frequent tracking review; unattended real-footage accuracy
+and sustained performance remain unvalidated. A local
 Swift MCP bridge now controls the shared application commands; connection and
 verification details are recorded in `docs/mcp.md`.
+
+An opt-in fixed-template normalized-correlation method is evaluated alongside
+the legacy SSD default in `docs/upstream-samples-2026-11-15.md`. It does not yet
+improve broad unattended real-footage success. New observations retain their
+matching method; version-3 projects protect this provenance from older readers.
 
 Motion analysis adds static configurable axes and timestamp-aware position,
 velocity, speed and acceleration through a shared numerical pipeline. Derivative
 settings and axes persist in version-2 projects; version-1 inputs retain legacy
 defaults. See `docs/motion-analysis.md`. This does not change matching algorithms
 or widen the tracking scheduler's single active execution slot.
+
+Non-destructive clip selection adds inclusive source-frame bounds and sampling
+through the shared session commands. Tracking, playback, derivatives and export
+use the same selected timeline, retaining original timestamps and all observations.
+Non-default clips persist in version-4 projects. See `docs/clips.md` for semantics
+and verification; physical time calibration and trimmed-video export remain separate work.
 
 ## Purpose
 

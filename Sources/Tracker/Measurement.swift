@@ -4,7 +4,7 @@ import CoreMedia
 
 enum MeasurementOrigin: String, Codable { case manual, automatic, acceptedCandidate }
 
-struct FrameStamp: Codable, Equatable, Hashable, Comparable {
+struct FrameStamp: Codable, Equatable, Hashable, Comparable, Sendable {
     var value: Int64
     var timescale: Int32
     var cmTime: CMTime { CMTime(value: value, timescale: timescale) }
@@ -19,6 +19,7 @@ struct Measurement: Identifiable, Codable, Equatable {
     var origin: MeasurementOrigin = .manual
     var score: Double? = nil
     var frame: FrameStamp? = nil
+    var matchingMethod: MatchingMethod? = nil
 }
 
 struct PointTrack: Identifiable, Codable, Equatable {
@@ -43,6 +44,7 @@ struct AnalysisState: Codable, Equatable {
     var calibration: Calibration?
     var coordinates: CoordinateSystem?
     var motion: MotionSettings?
+    var clip: VideoClip?
     var scientificState: Self {
         var state = self; state.selectedTrackID = nil; return state
     }

@@ -31,6 +31,9 @@ final class AutomationOperation {
             object["revision"] = .number(Double(record.revision))
             object["track_id"] = .string(record.trackID.uuidString)
             object["processed_frames"] = .number(Double(record.processed))
+            object["tracking_settings"] = try .from(record.settings)
+            object["algorithm"] = .string(record.settings.matchingMethod.algorithm)
+            object["clip"] = try ClipOutput.json(record.clip)
             if let message = record.error { object["error"] = .object(["code":.string("tracking_failed"),"message":.string(message)]) }
         }
         if let error { object["error"] = try .from(error) }
@@ -121,6 +124,8 @@ final class AutomationController: ObservableObject {
         case "tracker_open_project": label = "Requested project open " + (args["path"]?.string.map { URL(fileURLWithPath:$0).lastPathComponent } ?? "")
         case "tracker_select_session": label = "Selected video"
         case "tracker_seek": label = "Moved viewer to \(args["time"]?.number ?? 0) s"
+        case "tracker_set_clip": label = "Changed analysis clip and sampling"
+        case "tracker_reset_clip": label = "Restored the full source clip"
         case "tracker_add_track": label = "Added track " + (args["name"]?.string ?? "")
         case "tracker_mark_point": label = "Marked source pixel (\(args["x"]?.number ?? 0), \(args["y"]?.number ?? 0))"
         case "tracker_set_calibration": label = "Set scale reference \(args["length"]?.number ?? 0) \(args["unit"]?.string ?? "")"
@@ -140,6 +145,7 @@ final class AutomationController: ObservableObject {
     }
     private func failure(_ error: Error) -> AutomationError {
         if let error = error as? AutomationError { return error }
+        if let error = error as? ClipError { return AutomationError(error == .sourceMismatch ? "clip_source_mismatch" : "invalid_clip",error.localizedDescription) }
         if error is CancellationError { return AutomationError("cancelled", "Operation cancelled.") }
         return AutomationError("operation_failed", error.localizedDescription)
     }
@@ -219,6 +225,19 @@ final class AutomationController: ObservableObject {
         try s.requireReady()
         switch name {
         case "tracker_select_session": workspace.select(s.id)
+        case "tracker_set_clip", "tracker_reset_clip":
+            let previousSeek = s.seekToken
+            if name == "tracker_set_clip" { try s.setClip(start:a.requiredInt("start_frame"),end:a.requiredInt("end_frame"),step:a.requiredInt("step_size")) }
+            else { try s.resetClip() }
+            workspace.select(s.id)
+            let seekToken = s.seekToken
+            return try operation("clip",session:s,onCancel: {
+                if previousSeek != seekToken, s.seekToken == seekToken { s.cancelSeek() }
+            }) { _ in
+                try await self.waitReady(s)
+                guard s.seekToken == seekToken else { throw AutomationError("clip_superseded", "A later viewer or clip command superseded this refresh.") }
+                return try self.describe(s)
+            }
         case "tracker_seek":
             let time = try a.requiredNumber("time")
             guard time >= 0, time <= s.duration else { throw AutomationError("invalid_time", "Time is outside this video.") }
@@ -241,7 +260,12 @@ final class AutomationController: ObservableObject {
         case "tracker_configure_motion":
             try s.setMotionSettings(MotionSettings(window:try a.requiredInt("window")))
         case "tracker_configure_tracking":
-            try s.configure(TrackingSettings(templateRadius:try a.requiredInt("template_radius"),searchRadius:try a.requiredInt("search_radius"),minimumScore:try a.requiredNumber("minimum_score"),minimumSeparation:try a.requiredNumber("minimum_separation")))
+            var settings = TrackingSettings(templateRadius:try a.requiredInt("template_radius"),searchRadius:try a.requiredInt("search_radius"),minimumScore:try a.requiredNumber("minimum_score"),minimumSeparation:try a.requiredNumber("minimum_separation"))
+            if let supplied = a["matching_method"] {
+                guard let raw = supplied.string, let method = MatchingMethod(rawValue:raw) else { throw AutomationError("invalid_settings", "matching_method must be ssd or zncc.") }
+                settings.matchingMethod = method
+            } else { settings.matchingMethod = s.settings.matchingMethod }
+            try s.configure(settings)
         case "tracker_start_tracking": return try tracking(s,id:s.beginTracking(trackID:try a.requiredID("track_id")))
         case "tracker_review_match":
             let id = try a.requiredID("job_id"), action = try a.requiredString("action")
@@ -259,12 +283,25 @@ final class AutomationController: ObservableObject {
         case "tracker_save_project", "tracker_export_csv":
             let destination = try path(a), overwrite = a["overwrite"]?.bool ?? false, revision = s.revision
             let trackID = name == "tracker_export_csv" ? try a.requiredID("track_id") : nil
+            let clipSnapshot = s.clip
             if let trackID { _ = try s.requireTrack(trackID) }
+            let csvOptions: CSVExportOptions
+            if trackID != nil {
+                guard let profile = CSVProfile(rawValue:a["profile"]?.string ?? "standard") else { throw AutomationError("invalid_argument", "profile must be standard or excel.") }
+                let decimal: CSVDecimalSeparator
+                if let value = a["decimal_separator"]?.string {
+                    guard let supplied = CSVDecimalSeparator(rawValue:value) else { throw AutomationError("invalid_argument", "decimal_separator must be dot or comma.") }
+                    decimal = supplied
+                } else { decimal = profile == .excel ? .recommended(for:.current) : .dot }
+                csvOptions = try CSVExportOptions(profile:profile,decimalSeparator:decimal,
+                    includeProvenance:a["include_provenance"]?.bool ?? (profile == .standard),
+                    decimalPlaces:a["decimal_places"] == nil ? nil : try a.requiredInt("decimal_places")).validated()
+            } else { csvOptions = CSVExportOptions() }
             return try operation(name == "tracker_save_project" ? "save" : "export",session:s) { _ in
                 guard s.revision == revision else { throw AutomationError("stale_revision", "Session changed before the write began; inspect and retry with a new request ID.") }
-                if let trackID { try await s.writeCSV(trackID:trackID,to:destination,overwrite:overwrite) }
+                if let trackID { try await s.writeCSV(trackID:trackID,to:destination,overwrite:overwrite,options:csvOptions) }
                 else { try await s.writeProject(to:destination,overwrite:overwrite) }
-                return .object(["path":.string(destination.path),"saved_revision":.number(Double(revision))])
+                return .object(["path":.string(destination.path),"saved_revision":.number(Double(revision)),"clip":try ClipOutput.json(clipSnapshot)])
             }
         default: throw AutomationError("unknown_tool",name)
         }
@@ -306,11 +343,11 @@ final class AutomationController: ObservableObject {
             guard (1...1000).contains(limit), offset <= rows.count else { throw AutomationError("invalid_pagination", "limit must be 1...1000 and offset must not exceed the row count.") }
             let end = offset+min(limit,rows.count-offset)
             let values = try rows[offset..<end].map { try MotionOutput.json($0,unit:s.unit) }
-            return .object(["revision":.number(Double(revision)),"total":.number(Double(rows.count)),"offset":.number(Double(offset)),"next_offset":end < rows.count ? .number(Double(end)) : .null,"measurements":.array(values),"coordinate_origin":.string("configured axes for x/y; top-left source pixels for pixel_x/pixel_y"),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings),"score_is_probability":.bool(false)])
+            return .object(["revision":.number(Double(revision)),"total":.number(Double(rows.count)),"retained_total":.number(Double(try s.requireTrack(trackID).points.count)),"offset":.number(Double(offset)),"next_offset":end < rows.count ? .number(Double(end)) : .null,"measurements":.array(values),"coordinate_origin":.string("configured axes for x/y; top-left source pixels for pixel_x/pixel_y"),"clip":try ClipOutput.json(s.clip),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings,clip:s.clip),"score_is_probability":.bool(false)])
         default: throw AutomationError("unknown_tool",name)
         }
     }
     func describe(_ s: VideoSession) throws -> JSONValue {
-        .object(["session_id":.string(s.id.uuidString),"revision":.number(Double(s.revision)),"source_path":.string(s.url.path),"source_width":.number(s.size.width),"source_height":.number(s.size.height),"duration":.number(s.duration),"time":.number(s.time),"frame":try s.displayedFrame.map { try .from($0.stamp) } ?? .null,"loading":.bool(s.loading),"seeking":.bool(s.isSeeking),"playing":.bool(s.playing),"closed":.bool(s.closed),"error":s.error.map(JSONValue.string) ?? .null,"calibration":try s.calibration.map(JSONValue.from) ?? .null,"settings":try .from(s.settings),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings),"tracks":.array(s.tracks.map { .object(["track_id":.string($0.id.uuidString),"name":.string($0.name),"count":.number(Double($0.points.count))]) }),"job_id":s.lastTrackingID.map { .string($0.uuidString) } ?? .null,"job_state":.string(s.jobState),"dirty":.bool(s.isDirty)])
+        .object(["session_id":.string(s.id.uuidString),"revision":.number(Double(s.revision)),"source_path":.string(s.url.path),"source_width":.number(s.size.width),"source_height":.number(s.size.height),"duration":.number(s.duration),"time":.number(s.time),"frame":try s.displayedFrame.map { try .from($0.stamp) } ?? .null,"loading":.bool(s.loading),"seeking":.bool(s.isSeeking),"playing":.bool(s.playing),"closed":.bool(s.closed),"error":s.error.map(JSONValue.string) ?? .null,"calibration":try s.calibration.map(JSONValue.from) ?? .null,"settings":try .from(s.settings),"clip":try ClipOutput.json(s.clip),"motion":try MotionOutput.metadata(coordinates:s.coordinateSystem,size:s.size,settings:s.motionSettings,clip:s.clip),"tracks":.array(s.tracks.map { .object(["track_id":.string($0.id.uuidString),"name":.string($0.name),"count":.number(Double($0.points.count))]) }),"job_id":s.lastTrackingID.map { .string($0.uuidString) } ?? .null,"job_state":.string(s.jobState),"dirty":.bool(s.isDirty)])
     }
 }

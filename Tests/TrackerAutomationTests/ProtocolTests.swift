@@ -36,7 +36,7 @@ final class ProtocolTests: XCTestCase {
     func testWireRoundTripAndSchemas() throws {
         let request = AutomationRequest(command:"tracker_list_sessions",clientID:UUID())
         XCTAssertEqual(try JSONDecoder().decode(AutomationRequest.self,from:JSONEncoder().encode(request)).command,request.command)
-        XCTAssertEqual(Set(ToolCatalog.tools.map(\.name)).count,23)
+        XCTAssertEqual(Set(ToolCatalog.tools.map(\.name)).count,25)
         _ = try ToolCatalog.validate(request)
         XCTAssertThrowsError(try ToolCatalog.validate(AutomationRequest(command:"tracker_seek",arguments:["session_id":.string("a")],clientID:UUID())))
     }

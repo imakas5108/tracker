@@ -10,7 +10,13 @@ struct ProjectFile: Codable {
     var algorithm = "fixed-grayscale-ssd-v1"
 
     func validated() throws -> Self {
-        guard [1,2].contains(version) else { throw ProjectError.unsupportedVersion }
+        guard [1,2,3,4].contains(version) else { throw ProjectError.unsupportedVersion }
+        if let clip = analysis.clip {
+            guard version >= 4 else { throw ProjectError.invalidData }
+            _ = try clip.validated()
+        }
+        guard settings.matchingMethod == .squaredDifference || version >= 3,
+              version < 3 || algorithm == settings.matchingMethod.algorithm else { throw ProjectError.invalidData }
         guard source.isFileURL, sourceSize.width.isFinite, sourceSize.height.isFinite,
               sourceSize.width > 0, sourceSize.height > 0, time.isFinite, time >= 0,
               settings.isValid,
@@ -25,6 +31,7 @@ struct ProjectFile: Codable {
             guard Set(track.points.map(\.id)).count == track.points.count else { throw ProjectError.invalidData }
             var last = -Double.infinity
             for point in track.points {
+                guard point.matchingMethod != .normalizedCorrelation || version >= 3 else { throw ProjectError.invalidData }
                 guard point.time.isFinite, point.time >= 0, point.time > last,
                       point.pixel.x.isFinite, point.pixel.y.isFinite,
                       point.pixel.x >= 0, point.pixel.x < sourceSize.width,

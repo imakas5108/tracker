@@ -3,6 +3,8 @@
 A native Swift analysis baseline for video analysis on Apple Silicon.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for product goals and [DESIGN.md](DESIGN.md)
 for interface decisions.
+The [feature backlog](docs/feature-backlog.md) records specific Java Tracker gaps,
+current status and acceptance criteria for working through them one at a time.
 
 ## Build and run
 
@@ -41,7 +43,9 @@ still run. Do not report skipped integration tests as validated.
    choose visible table columns with Columns. The derivative menu defaults to
    three points; 5/7/9-point windows optionally smooth derivatives. Missing
    neighbors and gaps have no derivatives. Remove Last removes the latest-time point.
-   Export CSV writes the selected track's measurements.
+   Export CSV writes the selected track's measurements. Its Excel profile uses
+   regional separators and compact headers; Standard CSV preserves the original
+   machine-readable schema. Precision and provenance are explicit choices.
 
 ## Autotracking and projects
 
@@ -53,6 +57,12 @@ for Accept & Continue, Skip Frame, manual correction, or Stop. Accepting a candi
 records it as reviewed and starts a new fixed-template segment. Scores are not
 confidence probabilities. No learned model, predictive motion, or adaptive template
 evolution is implemented yet.
+
+Settings also offers experimental normalized correlation (`zncc`), alongside
+the default squared difference (`ssd`). It handles brightness/contrast changes
+and small-target score dilution in unit tests, but has not improved overall
+unattended success on the supplied mechanics samples. It remains opt-in.
+See [the full sample evaluation](docs/upstream-samples-2026-11-15.md).
 
 Save Project (Command-S) writes a versioned `.tracker.json` file referencing the
 source video, with track IDs, source-frame timestamps, settings, calibration, and
@@ -68,13 +78,26 @@ Dynamic parallel admission is future work. Switching tabs pauses playback.
 Use Enter Position (Command-Shift-M) for keyboard entry of source pixel coordinates.
 Menus, transport, selectors, and dialogs use native controls. Full scientific,
 accessibility, large-data, and sustained performance validation remain later work.
-CSV formatting and file writing run in the background. CSV includes measurement
-origin, match score, motion data, missing-value reasons and method/axes metadata.
+CSV formatting and file writing run in the background. Standard CSV includes
+measurement origin, match score, motion data, missing-value reasons and method/axes
+metadata. Excel CSV defaults to eight measurement columns; provenance is optional.
+See [CSV export](docs/csv-export.md).
 Source-frame marking is blocked while a seek is pending;
 the paused image and its actual source timestamp are the marking reference.
 Save before closing; tab-close and application-quit prompts protect unsaved edits.
 Tracker file compatibility remains deferred. Full production accessibility and large-data rendering validation remain open.
-New saves use project version 2; version-1 files still open with compatible defaults.
+**Clip Settings…** below the viewer selects inclusive source-frame bounds and a
+step size. Playback, tracking, plots and exports use that selection; all other
+observations remain in the project. Reset to Full Video restores them. Source
+timestamps stay unchanged. See [clip controls](docs/clips.md).
+
+Full-source SSD-only saves use project version 2; version-1 files still open with compatible defaults.
+Projects containing normalized-correlation settings or observations use version 3,
+which older builds reject. New observations preserve their matching method even
+after settings change. CSV provenance appends `tracking_method`; legacy unknown
+methods remain blank. Non-default clips require version 4. Provenance CSV also
+appends clip start/end bounds and step size; compact Excel CSV keeps eight columns.
+Current project settings do not replace per-point provenance.
 Read [the motion-analysis guide](docs/motion-analysis.md) for coordinate conventions,
 numerical methods, workflow references and limitations.
 See [delivery verification](docs/motion-delivery-2026-11-14.md) for release tests,
@@ -82,6 +105,10 @@ Codex/native control checks, performance measurements and visual-review limits.
 
 See [the tracking validation report](docs/tracking-baseline-2026-11-14.md) for measured
 results and limitations. The current engine remains Swift; no Rust speedup is claimed.
+The [real DJI stress test](docs/dji-stress-2026-11-15.md) documents prompt large-file
+import and the current matcher's failure to sustain unattended free-oscillation
+tracking. The [paired performance check](docs/controlled-performance-2026-11-15.md)
+compares the audit and motion baselines under identical synthetic workloads.
 
 The interface was informed by Tracker's public documentation and screenshot;
 no upstream code or assets were copied. Reference and implementation boundaries

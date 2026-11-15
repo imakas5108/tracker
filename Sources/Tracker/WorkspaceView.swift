@@ -270,7 +270,7 @@ struct VideoCanvas: View {
                         Text(error).multilineTextAlignment(.center)
                     }.padding(28).foregroundStyle(.white)
                 } else {
-                    if !session.playing, let frame = session.displayedFrame {
+                    if (!session.playing || session.usesSampledPlayback), let frame = session.displayedFrame {
                         Image(decorative: frame.image, scale: 1).resizable().aspectRatio(contentMode: .fit)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else { NativeVideo(player: session.player) }
@@ -374,13 +374,15 @@ struct NativeVideo: NSViewRepresentable {
 
 struct PlaybackBar: View {
     @ObservedObject var session: VideoSession
+    @State private var showClipSettings = false
     var body: some View {
         VStack(spacing: 10) {
             Slider(value: Binding(get: { session.time }, set: { session.pause(); session.seek($0) }),
-                   in: 0...max(session.duration, 0.01))
+                   in: session.playbackRange)
+                .disabled(session.loading || (session.clip?.sampleCount ?? 0) < 2)
                 .accessibilityLabel("Video time")
             HStack(spacing: 16) {
-                Button { session.seek(0); session.pause() } label: { Image(systemName: "backward.end.fill") }
+                Button { session.seek(session.clip?.startStamp.seconds ?? 0); session.pause() } label: { Image(systemName: "backward.end.fill") }
                     .help("Go to start").accessibilityLabel("Go to start")
                 Button { session.step(-1) } label: { Image(systemName: "backward.frame") }
                     .help("Previous frame").accessibilityLabel("Previous frame")
@@ -391,10 +393,19 @@ struct PlaybackBar: View {
                 Button { session.step(1) } label: { Image(systemName: "forward.frame") }
                     .help("Next frame").accessibilityLabel("Next frame")
                 Spacer()
-                Text("\(session.time, specifier: "%.3f") / \(session.duration, specifier: "%.3f") s")
+                Text("Source \(session.time, specifier: "%.3f") / \(session.duration, specifier: "%.3f") s")
                     .font(.system(.callout, design: .monospaced)).monospacedDigit()
             }.buttonStyle(.borderless)
+            HStack {
+                Button("Clip Settings…") { showClipSettings = true }
+                Text(session.clipSummary).font(.caption).monospacedDigit()
+                Spacer()
+                if let track = session.selectedTrack, track.points.count > session.points.count {
+                    Text("\(track.points.count-session.points.count) other points retained").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }.padding(14).background(Color(nsColor: .windowBackgroundColor))
             .disabled(session.loading || session.error != nil)
+            .sheet(isPresented:$showClipSettings) { ClipSettingsView(session:session) }
     }
 }

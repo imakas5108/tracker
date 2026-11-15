@@ -43,3 +43,21 @@ processing choices. Missing derivatives have an explicit marker and reason;
 source-provenance symbols remain visible. Axes use black-backed white labels and
 outlined handles so bright footage does not erase their labels. No new artwork,
 decorative surfaces, animations or fabricated measurements are introduced.
+
+CSV options stay in the native save panel, where the output decision belongs.
+Compact measurement headers keep the eight scientific quantities readable;
+regional separators, precision and provenance are explicit labeled controls.
+Standard CSV preserves the detailed machine-readable schema. No decorative
+surfaces or extra workspace panel is introduced.
+
+Matching method stays in the existing tracking settings sheet. The new option
+is explicitly experimental, and nearby text explains that thresholds depend on
+the method and do not represent probabilities. The workspace arrangement and
+review controls remain unchanged.
+
+Clip Settings sits beside the transport's source-frame summary, following Tracker's
+clip workflow. Its native sheet provides zero-based start/end bounds, step size,
+the actual last sampled frame, and an independent preview with Set Start/Set End.
+Invalid text disables Apply. Preview inspection does not move the main viewer.
+The transport shows when other observations are retained outside the selection;
+reset restores the full source without a destructive trim action.

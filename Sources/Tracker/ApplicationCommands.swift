@@ -9,8 +9,12 @@ final class SessionTrackingJob {
     var processed: Int
     var error: String?
     var revision = 0
-    init(id: UUID, trackID: UUID, state: String, processed: Int) {
+    let settings: TrackingSettings
+    let clip: VideoClip?
+    init(id: UUID, trackID: UUID, state: String, processed: Int, settings: TrackingSettings = TrackingSettings(), clip: VideoClip? = nil) {
         self.id = id; self.trackID = trackID; self.state = state; self.processed = processed
+        self.settings = settings
+        self.clip = clip
     }
 }
 
@@ -45,6 +49,7 @@ extension VideoSession {
         guard canMark, let frame = displayedFrame, abs(frame.stamp.seconds-time) < 0.000001 else {
             throw AutomationError("frame_not_ready", "Pause and seek the native viewer to the requested source frame before marking.")
         }
+        guard isSelected(frame.stamp) else { throw AutomationError("outside_clip", "Mark only selected clip steps; use Clip Settings to change the range or sampling.") }
         edit { state in
             let index = state.tracks.firstIndex(where: { $0.id == trackID })!
             Self.put(Measurement(time: frame.stamp.seconds, pixel: point, frame: frame.stamp), into: &state.tracks[index])
@@ -63,7 +68,7 @@ extension VideoSession {
     }
     func beginTracking(trackID: UUID) throws -> UUID {
         try requireReady(); let track = try requireTrack(trackID)
-        guard !isTracking, !isSeeking, !playing, let stamp = displayedFrame?.stamp,
+        guard !isTracking, !isSeeking, !playing, let stamp = displayedFrame?.stamp, isSelected(stamp),
               track.points.contains(where: { abs($0.time-stamp.seconds) < 0.000001 }) else {
             throw AutomationError("invalid_seed", "Wait for the current job/seek, and mark this track on the displayed frame.")
         }
@@ -85,12 +90,13 @@ extension VideoSession {
         }.value
         didSave(document, at: destination)
     }
-    func writeCSV(trackID: UUID, to destination: URL, overwrite: Bool) async throws {
+    func writeCSV(trackID: UUID, to destination: URL, overwrite: Bool, options: CSVExportOptions = CSVExportOptions()) async throws {
         try requireReady(); try validateOutput(destination)
+        let options = try options.validated()
         let rows = try await motionRows(trackID:trackID)
-        let units = unit, coordinate = coordinateSystem, configuration = motionSettings, dimensions = size
+        let units = unit, coordinate = coordinateSystem, configuration = motionSettings, dimensions = size, selection = clip
         try await Task.detached(priority: .utility) {
-            let data = try MotionOutput.csv(rows,unit:units,coordinates:coordinate,size:dimensions,settings:configuration)
+            let data = try MotionOutput.csv(rows,unit:units,coordinates:coordinate,size:dimensions,settings:configuration,options:options,clip:selection)
             try Task.checkCancellation()
             try AtomicOutput.write(data, to: destination, overwrite: overwrite)
         }.value

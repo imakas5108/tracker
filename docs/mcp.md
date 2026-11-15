@@ -1,6 +1,6 @@
 # Local Codex control
 
-Tracker exposes 23 tools through the official Swift MCP SDK, pinned to **0.11.0**.
+Tracker exposes 25 tools through the official Swift MCP SDK, pinned to **0.11.0**.
 `TrackerMCP` is bundled beside the app executable. Codex speaks MCP over stdio;
 the bridge sends length-prefixed JSON to Tracker over a Unix-domain socket.
 There is no HTTP listener, remote access, or continuous video/audio stream.
@@ -68,6 +68,7 @@ Commands do not resolve their target through the selected tab.
 | `tracker_list_sessions`, `tracker_get_session` | Inspect stable IDs, revisions, source, settings and state. |
 | `tracker_import_video`, `tracker_open_project` | Open explicit local paths; return an operation ID. |
 | `tracker_select_session`, `tracker_seek` | Update native selection/viewer; seek returns an operation ID. |
+| `tracker_set_clip`, `tracker_reset_clip` | Set inclusive source-frame bounds/step size or restore full source; poll the returned operation. |
 | `tracker_get_frame` | Inspect an independent, timestamped PNG without seeking the viewer. |
 | `tracker_add_track`, `tracker_mark_point` | Add a track and mark/correct a paused source frame. |
 | `tracker_set_calibration`, `tracker_configure_tracking` | Supply a known scale reference and validated tracking settings. |
@@ -77,6 +78,42 @@ Commands do not resolve their target through the selected tab.
 | `tracker_get_measurements` | Paginate observations and derived motion, with stamps, units, method and missing-value reasons. |
 | `tracker_set_axes`, `tracker_configure_motion` | Set source-pixel origin/angle and derivative window without restarting tracking. |
 | `tracker_save_project`, `tracker_export_csv` | Write explicit output paths; poll the returned operation. |
+
+`tracker_configure_tracking` also accepts `matching_method=ssd|zncc`. Sessions
+default to legacy `ssd`; omitting this argument preserves the current method.
+`zncc` is experimental normalized correlation, not an object detector. Thresholds
+have different numerical meanings between methods. Job snapshots retain their
+original `algorithm` and `tracking_settings` after later edits. Measurements
+include nullable `matching_method`; unknown legacy scores remain unlabeled.
+
+`tracker_export_csv` keeps its original Standard CSV default (comma delimiter,
+decimal points, full precision and provenance). Optional arguments:
+
+- `profile`: `standard` or `excel`.
+- `decimal_separator`: `dot` or `comma`. Excel defaults to the app's regional
+  decimal separator; Standard requires `dot`.
+- `include_provenance`: Standard defaults true; Excel defaults false.
+- `decimal_places`: optional integer 0–15, explicitly rounds this export only.
+  Omit it for full precision.
+
+Excel CSV includes a UTF-8 BOM, CRLF and a `sep=` directive, choosing a semicolon
+with decimal commas. Its compact columns are t/x/y/vx/vy/v/ax/ay with units.
+Generic CSV readers should use Standard CSV or explicitly handle the directive.
+Provenance exports append `tracking_method` after the original 18 columns,
+identifying scores from new runs without changing the preceding column order.
+The next three provenance columns are `clip_start_frame`, `clip_end_frame`, and
+`clip_step_size` (22 columns total). Compact Excel output remains eight columns.
+See [CSV export](csv-export.md) for compatibility and verification limits.
+
+Clip tools take `start_frame`, `end_frame`, `step_size` with zero-based inclusive
+bounds. Sampling is anchored to start; `get_session.clip.last_sample_frame` can
+precede the end bound. Seek clamps and snaps down to selected steps. `get_frame`
+can still inspect any source frame without moving playback. Measurements return
+selected `total` and all-observation `retained_total`; session track counts retain
+their original all-observation meaning. Jobs and writes retain their clip snapshot.
+A clip change stops affected tracking, clears review and refreshes the viewer;
+cancelling that refresh does not undo the already accepted range. Non-default clips
+require project version 4. See [clip semantics and acceptance](clips.md).
 
 A typical sequence is import → poll → inspect frame → add track → calibrate →
 seek/poll → mark seed → configure/start → poll/review → save/export → reopen.
@@ -181,8 +218,9 @@ sequential-reader start. Indexing uses CoreMedia output timing, so container
 edit offsets agree with the native viewer; empty edit spans are not observations.
 Track selection is view state: changing it does not cancel tracking, enter undo
 history, mark scientific results dirty, or increment the edit revision. Explicit
-saves still serialize the selected track. New saves use project version 2 for
-axes and derivative settings; this app reads version-1 projects with legacy defaults.
+saves still serialize the selected track. Full-source saves use project version 2
+for axes/derivatives or version 3 for normalized-matching provenance. Non-default
+clips require version 4; version-1 projects retain legacy defaults.
 
 Tracking starts require a paused, ready source frame through both UI and MCP.
 Terminal operation records retain IDs, status, revision and errors without
