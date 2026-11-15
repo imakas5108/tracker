@@ -3,3 +3,6 @@
 build/
 .DS_Store
 rust/target/
+swift/.build/
+swift/.swiftpm/
+swift/build/

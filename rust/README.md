@@ -5,7 +5,10 @@ Java Tracker style workspace and an MCP server that lets AI agents run a complet
 analysis in the app you are looking at. macOS (Apple Silicon) first; platform code sits
 behind traits so Windows and Linux can follow.
 
-The Swift app in the repository root is the reference implementation and test oracle.
+This is an independent port maintained separately from the Swift application in
+`../swift/`. It does not replace or freeze Swift development. The port was
+introduced by TkmanDevs in commit `a4e5137`; the shared MIT license is `../LICENSE`.
+Swift comparisons must identify the exact revision and fixtures used.
 
 ## Crates
 

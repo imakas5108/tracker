@@ -38,7 +38,7 @@ absolute command must match your checkout or installed application location.
 
 ```toml
 [mcp_servers.tracker]
-command = "/Users/imakas/Documents/tracker/build/Tracker.app/Contents/MacOS/TrackerMCP"
+command = "/Users/imakas/Documents/tracker/swift/build/Tracker.app/Contents/MacOS/TrackerMCP"
 startup_timeout_sec = 25
 tool_timeout_sec = 60
 ```
